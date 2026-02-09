@@ -2,6 +2,8 @@
 
 Sistema de gestão para loja de roupas: PDV, estoque, custos, precificação, financeiro e admin multi-tenant com identidade visual por empresa.
 
+**Repositório:** [github.com/brehmeaugusto/LojistaCore](https://github.com/brehmeaugusto/LojistaCore)
+
 ## Stack
 
 - **Next.js 16** (App Router) + **TypeScript**
