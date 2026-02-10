@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
 import { updateStore, addAuditLog, generateId, type Cliente } from "@/lib/store"
-import { persistCliente } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,40 +17,23 @@ export function CadastrosClientes() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ nome: "", cpf: "", email: "", telefone: "" })
   const [search, setSearch] = useState("")
-  const [saving, setSaving] = useState(false)
 
-  const sessao = store.sessao
-  const empresaId = sessao?.tipo === "usuario_empresa" ? sessao.empresaId : null
-  if (!empresaId) return null
-
-  const clientes = store.clientes.filter((c) => c.empresaId === empresaId)
+  const clientes = store.clientes.filter((c) => c.empresaId === "emp1")
   const filtered = clientes.filter(
     (c) => c.nome.toLowerCase().includes(search.toLowerCase()) || c.cpf.includes(search)
   )
 
-  async function save() {
+  function save() {
     if (!form.nome) return
-    setSaving(true)
-    try {
-      if (editingId) {
-        const updated: Cliente = { ...store.clientes.find((c) => c.id === editingId)!, ...form }
-        await persistCliente(updated, true)
-        updateStore((s) => ({ ...s, clientes: s.clientes.map((c) => c.id === editingId ? { ...c, ...form } : c) }))
-        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "editar_cliente", entidade: "Cliente", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-      } else {
-        const criadoEm = new Date().toISOString().split("T")[0]
-        const novo: Cliente = { ...form, id: "", empresaId, criadoEm } as Cliente
-        const id = await persistCliente(novo, false)
-        novo.id = id
-        updateStore((s) => ({ ...s, clientes: [...s.clientes, novo] }))
-        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "criar_cliente", entidade: "Cliente", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo cliente" })
-      }
-      setDialogOpen(false)
-    } catch (e) {
-      console.error("Erro ao salvar cliente:", e)
-    } finally {
-      setSaving(false)
+    if (editingId) {
+      updateStore((s) => ({ ...s, clientes: s.clientes.map((c) => c.id === editingId ? { ...c, ...form } : c) }))
+      addAuditLog({ usuario: "Admin Empresa", acao: "editar_cliente", entidade: "Cliente", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
+    } else {
+      const id = generateId()
+      updateStore((s) => ({ ...s, clientes: [...s.clientes, { ...form, id, empresaId: "emp1", criadoEm: new Date().toISOString().split("T")[0] } as Cliente] }))
+      addAuditLog({ usuario: "Admin Empresa", acao: "criar_cliente", entidade: "Cliente", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo cliente" })
     }
+    setDialogOpen(false)
   }
 
   return (
@@ -123,7 +105,7 @@ export function CadastrosClientes() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} disabled={saving} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">{saving ? "Salvando..." : "Salvar"}</Button>
+            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -3,12 +3,11 @@
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
 import {
-  updateStore, addAuditLog, getModulosLicenciados,
+  updateStore, addAuditLog, generateId, getModulosLicenciados,
   MODULOS_CATALOGO,
   type UsuarioEmpresa, type PapelEmpresa, type UsuarioEmpresaStatus,
   type ModuloId, type PermissaoId,
 } from "@/lib/store"
-import { persistUsuario, persistUsuarioStatus } from "@/lib/supabase-persist"
 import { hashSenhaParaStorage } from "@/lib/login-unificado"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -88,22 +87,11 @@ export function UsuariosAcessos() {
       if (editingId) {
         const before = store.usuariosEmpresa.find((u) => u.id === editingId)
         const senhaHash = form.senha ? await hashSenhaParaStorage(form.senha) : undefined
-        await persistUsuario({
-          id: editingId,
-          empresaId: empresaId!,
-          nome: form.nome,
-          login: form.login,
-          senha: senhaHash,
-          papel: form.papel,
-          status: before?.status ?? "ativo",
-          modulosLiberados: before?.modulosLiberados ?? [],
-          permissoes: before?.permissoes ?? [],
-        }, true)
         updateStore((s) => ({
           ...s,
           usuariosEmpresa: s.usuariosEmpresa.map((u) =>
             u.id === editingId
-              ? { ...u, nome: form.nome, login: form.login, papel: form.papel }
+              ? { ...u, nome: form.nome, login: form.login, papel: form.papel, ...(senhaHash ? { senha: senhaHash } : {}) }
               : u
           ),
         }))
@@ -118,22 +106,13 @@ export function UsuariosAcessos() {
       })
     } else {
         const senhaHash = await hashSenhaParaStorage(form.senha || "123456")
-        const id = await persistUsuario({
-          empresaId: empresaId!,
-          nome: form.nome,
-          login: form.login,
-          senha: senhaHash,
-          papel: form.papel,
-          status: "ativo",
-          modulosLiberados: [],
-          permissoes: [],
-        }, false)
+        const id = generateId()
         const novoUsuario: UsuarioEmpresa = {
           id,
           empresaId: empresaId!,
           nome: form.nome,
           login: form.login,
-          senha: "",
+          senha: senhaHash,
           papel: form.papel,
           status: "ativo",
           modulosLiberados: [],
@@ -161,11 +140,9 @@ export function UsuariosAcessos() {
     }
   }
 
-  async function toggleStatus(user: UsuarioEmpresa) {
+  function toggleStatus(user: UsuarioEmpresa) {
     const novoStatus: UsuarioEmpresaStatus = user.status === "ativo" ? "suspenso" : "ativo"
-    try {
-      await persistUsuarioStatus(user.id, novoStatus)
-      updateStore((s) => ({
+    updateStore((s) => ({
       ...s,
       usuariosEmpresa: s.usuariosEmpresa.map((u) =>
         u.id === user.id ? { ...u, status: novoStatus } : u
@@ -180,9 +157,6 @@ export function UsuariosAcessos() {
       depois: JSON.stringify({ status: novoStatus }),
       motivo: novoStatus === "suspenso" ? "Usuario suspenso pelo admin" : "Usuario reativado pelo admin",
     })
-    } catch (e) {
-      console.error("Erro ao alterar status do usuario:", e)
-    }
   }
 
   function toggleModulo(moduloId: ModuloId) {
@@ -206,21 +180,10 @@ export function UsuariosAcessos() {
     )
   }
 
-  async function savePermissions() {
+  function savePermissions() {
     if (!permUserId) return
-    try {
-      const before = store.usuariosEmpresa.find((u) => u.id === permUserId)
-      await persistUsuario({
-        id: permUserId,
-        empresaId: before!.empresaId,
-        nome: before!.nome,
-        login: before!.login,
-        papel: before!.papel,
-        status: before!.status,
-        modulosLiberados: modulosEdit,
-        permissoes: permissoesEdit,
-      }, true)
-      updateStore((s) => ({
+    const before = store.usuariosEmpresa.find((u) => u.id === permUserId)
+    updateStore((s) => ({
       ...s,
       usuariosEmpresa: s.usuariosEmpresa.map((u) =>
         u.id === permUserId
@@ -243,10 +206,7 @@ export function UsuariosAcessos() {
       }),
       motivo: "Alteracao de modulos e permissoes do usuario",
     })
-      setPermDialogOpen(false)
-    } catch (e) {
-      console.error("Erro ao salvar permissoes:", e)
-    }
+    setPermDialogOpen(false)
   }
 
   const permUser = permUserId ? store.usuariosEmpresa.find((u) => u.id === permUserId) : null

@@ -2,8 +2,7 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, type Fornecedor } from "@/lib/store"
-import { persistFornecedor } from "@/lib/supabase-persist"
+import { updateStore, addAuditLog, generateId, type Fornecedor } from "@/lib/store"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,39 +17,23 @@ export function CadastrosFornecedores() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ nome: "", cnpj: "", contato: "", email: "" })
   const [search, setSearch] = useState("")
-  const [saving, setSaving] = useState(false)
 
-  const sessao = store.sessao
-  const empresaId = sessao?.tipo === "usuario_empresa" ? sessao.empresaId : null
-  if (!empresaId) return null
-
-  const fornecedores = store.fornecedores.filter((f) => f.empresaId === empresaId)
+  const fornecedores = store.fornecedores.filter((f) => f.empresaId === "emp1")
   const filtered = fornecedores.filter(
     (f) => f.nome.toLowerCase().includes(search.toLowerCase()) || f.cnpj.includes(search)
   )
 
-  async function save() {
+  function save() {
     if (!form.nome) return
-    setSaving(true)
-    try {
-      if (editingId) {
-        const updated: Fornecedor = { ...store.fornecedores.find((f) => f.id === editingId)!, ...form }
-        await persistFornecedor(updated, true)
-        updateStore((s) => ({ ...s, fornecedores: s.fornecedores.map((f) => f.id === editingId ? { ...f, ...form } : f) }))
-        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "editar_fornecedor", entidade: "Fornecedor", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-      } else {
-        const novo: Fornecedor = { ...form, id: "", empresaId } as Fornecedor
-        const id = await persistFornecedor(novo, false)
-        novo.id = id
-        updateStore((s) => ({ ...s, fornecedores: [...s.fornecedores, novo] }))
-        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "criar_fornecedor", entidade: "Fornecedor", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo fornecedor" })
-      }
-      setDialogOpen(false)
-    } catch (e) {
-      console.error("Erro ao salvar fornecedor:", e)
-    } finally {
-      setSaving(false)
+    if (editingId) {
+      updateStore((s) => ({ ...s, fornecedores: s.fornecedores.map((f) => f.id === editingId ? { ...f, ...form } : f) }))
+      addAuditLog({ usuario: "Admin Empresa", acao: "editar_fornecedor", entidade: "Fornecedor", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
+    } else {
+      const id = generateId()
+      updateStore((s) => ({ ...s, fornecedores: [...s.fornecedores, { ...form, id, empresaId: "emp1" } as Fornecedor] }))
+      addAuditLog({ usuario: "Admin Empresa", acao: "criar_fornecedor", entidade: "Fornecedor", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo fornecedor" })
     }
+    setDialogOpen(false)
   }
 
   return (
@@ -120,7 +103,7 @@ export function CadastrosFornecedores() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} disabled={saving} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">{saving ? "Salvando..." : "Salvar"}</Button>
+            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

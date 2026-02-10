@@ -9,7 +9,6 @@ import {
   temPermissao,
   type SessaoCaixa,
 } from "@/lib/store"
-import { persistSessaoCaixa } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -75,7 +74,7 @@ export function CaixaTela() {
   )
   const totalVendas = vendasSessao.reduce((s, v) => s + v.total, 0)
 
-  async function abrirCaixa() {
+  function abrirCaixa() {
     if (!lojaId) return
     if (!temPermissao(usuarioId, "CAIXA_ABRIR")) {
       addAuditLog({
@@ -90,25 +89,26 @@ export function CaixaTela() {
       return
     }
 
-    const novaSessao: SessaoCaixa = {
-      id: "",
-      empresaId,
-      lojaId,
-      operador: sessao.nome,
-      status: "aberto",
-      abertura: new Date().toISOString(),
-      fechamento: "",
-      valorAbertura: Number(valorAbertura) || 0,
-      valorFechamento: 0,
-      sangrias: 0,
-      suprimentos: 0,
-      divergencia: 0,
-    }
-    const id = await persistSessaoCaixa(novaSessao, false)
-    novaSessao.id = id
+    const id = generateId()
     updateStore((s) => ({
       ...s,
-      sessoesCaixa: [...s.sessoesCaixa, novaSessao],
+      sessoesCaixa: [
+        ...s.sessoesCaixa,
+        {
+          id,
+          empresaId,
+          lojaId,
+          operador: sessao.nome,
+          status: "aberto" as const,
+          abertura: new Date().toISOString(),
+          fechamento: "",
+          valorAbertura: Number(valorAbertura) || 0,
+          valorFechamento: 0,
+          sangrias: 0,
+          suprimentos: 0,
+          divergencia: 0,
+        },
+      ],
     }))
 
     addAuditLog({
@@ -123,7 +123,7 @@ export function CaixaTela() {
     setShowAbertura(false)
   }
 
-  async function fecharCaixa() {
+  function fecharCaixa() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_FECHAR")) {
       addAuditLog({
@@ -141,18 +141,18 @@ export function CaixaTela() {
     const esperado = sessaoAtual.valorAbertura + totalVendasDinheiro - sessaoAtual.sangrias + sessaoAtual.suprimentos
     const divergencia = vlFechamento - esperado
 
-    const sessaoFechada: SessaoCaixa = {
-      ...sessaoAtual,
-      status: "fechado",
-      fechamento: new Date().toISOString(),
-      valorFechamento: vlFechamento,
-      divergencia,
-    }
-    await persistSessaoCaixa(sessaoFechada, true)
     updateStore((s) => ({
       ...s,
       sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id ? sessaoFechada : c
+        c.id === sessaoAtual.id
+          ? {
+              ...c,
+              status: "fechado" as const,
+              fechamento: new Date().toISOString(),
+              valorFechamento: vlFechamento,
+              divergencia,
+            }
+          : c
       ),
     }))
 
@@ -169,7 +169,7 @@ export function CaixaTela() {
     setValorFechamento("")
   }
 
-  async function registrarSangria() {
+  function registrarSangria() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_SANGRIA")) {
       addAuditLog({
@@ -186,12 +186,12 @@ export function CaixaTela() {
     const valor = Number(sangriaValor) || 0
     if (valor <= 0) return
 
-    const sessaoAtualizada: SessaoCaixa = { ...sessaoAtual, sangrias: sessaoAtual.sangrias + valor }
-    await persistSessaoCaixa(sessaoAtualizada, true)
     updateStore((s) => ({
       ...s,
       sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id ? sessaoAtualizada : c
+        c.id === sessaoAtual.id
+          ? { ...c, sangrias: c.sangrias + valor }
+          : c
       ),
     }))
     addAuditLog({
@@ -206,7 +206,7 @@ export function CaixaTela() {
     setSangriaValor("")
   }
 
-  async function registrarSuprimento() {
+  function registrarSuprimento() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_SUPRIMENTO")) {
       addAuditLog({
@@ -223,12 +223,12 @@ export function CaixaTela() {
     const valor = Number(suprimentoValor) || 0
     if (valor <= 0) return
 
-    const sessaoAtualizada: SessaoCaixa = { ...sessaoAtual, suprimentos: sessaoAtual.suprimentos + valor }
-    await persistSessaoCaixa(sessaoAtualizada, true)
     updateStore((s) => ({
       ...s,
       sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id ? sessaoAtualizada : c
+        c.id === sessaoAtual.id
+          ? { ...c, suprimentos: c.suprimentos + valor }
+          : c
       ),
     }))
     addAuditLog({

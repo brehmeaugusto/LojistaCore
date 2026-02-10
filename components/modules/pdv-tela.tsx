@@ -11,12 +11,6 @@ import {
   type VendaItem,
   type Pagamento,
 } from "@/lib/store"
-import {
-  persistVendaCompleta,
-  persistContaReceber,
-  persistEstoqueSaldo,
-  persistMovimentoEstoque,
-} from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -116,7 +110,7 @@ export function PDVTela() {
     setItensVenda(itensVenda.filter((i) => i.skuId !== skuId))
   }
 
-  async function finalizarVenda() {
+  function finalizarVenda() {
     if (!temPermissao(usuarioId, "PDV_VENDER")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -134,8 +128,9 @@ export function PDVTela() {
     if (itensVenda.length === 0) return
 
     const lojaIdVenda = lojaId ?? caixaAberto.lojaId
+    const vendaId = generateId()
     const venda: Venda = {
-      id: "",
+      id: vendaId,
       empresaId,
       lojaId: lojaIdVenda,
       operador: caixaAberto.operador,
@@ -151,14 +146,10 @@ export function PDVTela() {
       total: totalVenda,
     }
 
-    try {
-      const vendaId = await persistVendaCompleta(venda)
-      venda.id = vendaId
-
-      const newConta = {
-        id: "",
-        empresaId,
-        vendaId,
+    const newConta = {
+      id: generateId(),
+      empresaId,
+      vendaId,
         valor: totalVenda,
         dataVencimento:
           formaPagamento === "dinheiro" || formaPagamento === "pix"
@@ -169,41 +160,8 @@ export function PDVTela() {
         status: (formaPagamento === "dinheiro" || formaPagamento === "pix"
           ? "recebido"
           : "pendente") as "recebido" | "pendente",
-        formaPagamento,
-      }
-      const contaId = await persistContaReceber(newConta)
-      newConta.id = contaId
-
-      for (const item of itensVenda) {
-        const estoqueItem = store.estoque.find(
-          (e) => e.skuId === item.skuId && e.lojaId === lojaIdVenda
-        )
-        const novoDisponivel = (estoqueItem?.disponivel ?? 0) - item.quantidade
-        const estoqueAtualizado = estoqueItem
-          ? { ...estoqueItem, disponivel: novoDisponivel }
-          : {
-              id: "",
-              empresaId,
-              lojaId: lojaIdVenda,
-              skuId: item.skuId,
-              disponivel: novoDisponivel,
-              reservado: 0,
-              emTransito: 0,
-            }
-        await persistEstoqueSaldo(estoqueAtualizado)
-        await persistMovimentoEstoque({
-          id: generateId(),
-          empresaId,
-          lojaId: lojaIdVenda,
-          skuId: item.skuId,
-          tipo: "saida",
-          quantidade: item.quantidade,
-          motivo: `Venda ${vendaId}`,
-          usuario: sessao.nome,
-          dataHora: new Date().toISOString(),
-          referencia: vendaId,
-        })
-      }
+      formaPagamento,
+    }
 
     // Update store: add sale, deduct stock, add financial record
     updateStore((s) => {
@@ -239,7 +197,7 @@ export function PDVTela() {
       }
     })
 
-      addAuditLog({
+    addAuditLog({
       usuario: sessao.nome,
       acao: "finalizar_venda",
       entidade: "Venda",
@@ -249,11 +207,8 @@ export function PDVTela() {
       motivo: "Venda finalizada no PDV",
     })
 
-      setItensVenda([])
-      setVendedor("")
-    } catch (e) {
-      console.error("Erro ao finalizar venda:", e)
-    }
+    setItensVenda([])
+    setVendedor("")
   }
 
   const formaIcons: Record<string, typeof CreditCard> = {

@@ -5,10 +5,10 @@ import { useAppStore } from "@/hooks/use-store"
 import {
   updateStore,
   addAuditLog,
+  generateId,
   temPermissao,
   type LinhaPrecificacao,
 } from "@/lib/store"
-import { persistLinhaPrecificacao } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -136,12 +136,9 @@ export function PrecificacaoTela() {
       modoPrecoAVista: form.modoPrecoAVista,
     }
 
-    try {
-      if (editingId) {
-        const before = linhas.find((l) => l.id === editingId)
-        const updated: LinhaPrecificacao = { ...before!, ...data }
-        await persistLinhaPrecificacao(updated, true)
-        updateStore((s) => ({
+    if (editingId) {
+      const before = linhas.find((l) => l.id === editingId)
+      updateStore((s) => ({
           ...s,
           linhasPrecificacao: s.linhasPrecificacao.map((l) =>
             l.id === editingId ? { ...l, ...data } : l
@@ -157,13 +154,12 @@ export function PrecificacaoTela() {
         motivo: "Edicao de precificacao",
       })
     } else {
-        const novo: LinhaPrecificacao = { ...data, id: "", empresaId } as LinhaPrecificacao
-        const id = await persistLinhaPrecificacao(novo, false)
-        novo.id = id
-        updateStore((s) => ({
-          ...s,
-          linhasPrecificacao: [...s.linhasPrecificacao, novo],
-        }))
+      const id = generateId()
+      const novo: LinhaPrecificacao = { ...data, id, empresaId } as LinhaPrecificacao
+      updateStore((s) => ({
+        ...s,
+        linhasPrecificacao: [...s.linhasPrecificacao, novo],
+      }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_linha_precificacao",
@@ -174,10 +170,7 @@ export function PrecificacaoTela() {
         motivo: "Nova linha de precificacao",
       })
     }
-      setDialogOpen(false)
-    } catch (e) {
-      console.error("Erro ao salvar precificacao:", e)
-    }
+    setDialogOpen(false)
   }
 
   return (

@@ -8,7 +8,6 @@ import {
   generateId,
   temPermissao,
 } from "@/lib/store"
-import { persistEstoqueSaldo, persistMovimentoEstoque } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -78,7 +77,7 @@ export function EstoqueConsulta() {
     .filter((m) => m.empresaId === empresaId && m.lojaId === filtroLoja)
     .sort((a, b) => new Date(b.dataHora).getTime() - new Date(a.dataHora).getTime())
 
-  async function realizarAjuste() {
+  function realizarAjuste() {
     if (!temPermissao(usuarioId, "ESTOQUE_AJUSTE")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -104,7 +103,7 @@ export function EstoqueConsulta() {
     const estoqueAtualizado = estoqueItem
       ? { ...estoqueItem, disponivel: novoDisponivel }
       : {
-          id: "",
+          id: generateId(),
           empresaId,
           lojaId: filtroLoja,
           skuId: ajusteSku,
@@ -112,8 +111,6 @@ export function EstoqueConsulta() {
           reservado: 0,
           emTransito: 0,
         }
-    const saldoId = await persistEstoqueSaldo(estoqueAtualizado)
-    if (!estoqueItem) estoqueAtualizado.id = saldoId
     const movimento = {
       id: generateId(),
       empresaId,
@@ -126,7 +123,6 @@ export function EstoqueConsulta() {
       dataHora: new Date().toISOString(),
       referencia: "",
     }
-    await persistMovimentoEstoque(movimento)
 
     updateStore((s) => ({
       ...s,
@@ -154,7 +150,7 @@ export function EstoqueConsulta() {
     setAjusteMotivo("")
   }
 
-  async function realizarTransferencia() {
+  function realizarTransferencia() {
     if (!temPermissao(usuarioId, "ESTOQUE_TRANSFERIR")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -178,7 +174,7 @@ export function EstoqueConsulta() {
     const destinoAtualizado = destino
       ? { ...destino, emTransito: destino.emTransito + qtd }
       : {
-          id: "",
+          id: generateId(),
           empresaId,
           lojaId: transfDestino,
           skuId: transfSku,
@@ -186,9 +182,6 @@ export function EstoqueConsulta() {
           reservado: 0,
           emTransito: qtd,
         }
-    if (origemAtualizado) await persistEstoqueSaldo(origemAtualizado)
-    const destId = await persistEstoqueSaldo(destinoAtualizado)
-    if (!destino) destinoAtualizado.id = destId
     const movimento = {
       id: generateId(),
       empresaId,
@@ -201,7 +194,6 @@ export function EstoqueConsulta() {
       dataHora: new Date().toISOString(),
       referencia: transfDestino,
     }
-    await persistMovimentoEstoque(movimento)
 
     updateStore((s) => ({
       ...s,

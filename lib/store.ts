@@ -3,8 +3,6 @@
 // In-memory store with full audit trail
 // ==========================================
 
-import { persistAuditoria } from "@/lib/supabase-persist"
-
 export type EmpresaStatus = "ativa" | "suspensa" | "encerrada"
 export type LicencaStatus = "ativa" | "expirada" | "bloqueada"
 export type ModuloId = "pdv" | "estoque" | "compras" | "financeiro" | "basice" | "relatorios" | "crm" | "configuracoes"
@@ -721,17 +719,13 @@ export function subscribe(listener: Listener): () => void {
 }
 
 export function addAuditLog(entry: Omit<AuditoriaGlobal, "id" | "dataHora">) {
-  const id = generateId()
-  const dataHora = new Date().toISOString()
   updateStore((s) => ({
     ...s,
     auditoria: [
-      { ...entry, id, dataHora },
+      { ...entry, id: generateId(), dataHora: new Date().toISOString() },
       ...s.auditoria,
     ],
   }))
-  // Persiste no Supabase (fire-and-forget)
-  void persistAuditoria({ ...entry }).catch((e) => console.error("Erro ao persistir auditoria:", e))
 }
 
 // ==========================================

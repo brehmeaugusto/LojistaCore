@@ -38,7 +38,6 @@ import { CadastrosProdutos } from "@/components/modules/cadastros-produtos"
 import { CadastrosSKUs } from "@/components/modules/cadastros-skus"
 import { CadastrosClientes } from "@/components/modules/cadastros-clientes"
 import { CadastrosFornecedores } from "@/components/modules/cadastros-fornecedores"
-import { CadastrosLojas } from "@/components/modules/cadastros-lojas"
 import { EstoqueConsulta } from "@/components/modules/estoque-consulta"
 import { CustosTela } from "@/components/modules/custos-tela"
 import { PrecificacaoTela } from "@/components/modules/precificacao-tela"
@@ -54,7 +53,7 @@ import { PDVFullscreen } from "@/components/modules/pdv-fullscreen"
 type Page =
   | "dashboard"
   | "admin-empresas" | "admin-licencas" | "admin-auditoria"
-  | "cad-produtos" | "cad-skus" | "cad-clientes" | "cad-fornecedores" | "cad-lojas"
+  | "cad-produtos" | "cad-skus" | "cad-clientes" | "cad-fornecedores"
   | "estoque"
   | "custos" | "precificacao"
   | "pdv" | "caixa"
@@ -106,7 +105,6 @@ const allMenuGroups: MenuGroup[] = [
       { id: "cad-skus", label: "SKUs / Grade", icon: Package },
       { id: "cad-clientes", label: "Clientes", icon: Users },
       { id: "cad-fornecedores", label: "Fornecedores", icon: Truck },
-      { id: "cad-lojas", label: "Lojas", icon: Store },
     ],
   },
   {
@@ -155,7 +153,6 @@ const pageComponents: Record<Page, React.ComponentType> = {
   "cad-skus": CadastrosSKUs,
   "cad-clientes": CadastrosClientes,
   "cad-fornecedores": CadastrosFornecedores,
-  "cad-lojas": CadastrosLojas,
   estoque: EstoqueConsulta,
   custos: CustosTela,
   precificacao: PrecificacaoTela,

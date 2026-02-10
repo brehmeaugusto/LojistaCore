@@ -11,12 +11,6 @@ import {
   type CustoVariavel,
   type SnapshotOverhead,
 } from "@/lib/store"
-import {
-  persistCustoFixo,
-  persistCustoVariavel,
-  persistParametrosCusto,
-  persistSnapshotOverhead,
-} from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,14 +65,11 @@ export function CustosTela() {
   const totalCustos = totalFixos + totalVariaveis
   const overheadUnitario = totalPecas > 0 ? totalCustos / totalPecas : 0
 
-  async function saveFixo() {
+  function saveFixo() {
     if (!fixoForm.descricao || fixoForm.valor < 0) return
     if (!podeEditar) return
-    try {
-      if (editingFixoId) {
-        const updated: CustoFixo = { ...store.custosFixos.find((c) => c.id === editingFixoId)!, ...fixoForm }
-        await persistCustoFixo(updated, true)
-        updateStore((s) => ({ ...s, custosFixos: s.custosFixos.map((c) => c.id === editingFixoId ? { ...c, ...fixoForm } : c) }))
+    if (editingFixoId) {
+      updateStore((s) => ({ ...s, custosFixos: s.custosFixos.map((c) => c.id === editingFixoId ? { ...c, ...fixoForm } : c) }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "editar_custo_fixo",
@@ -89,13 +80,12 @@ export function CustosTela() {
         motivo: "Alteracao de custo fixo",
       })
     } else {
-        const novo: CustoFixo = { ...fixoForm, id: "", empresaId, ativo: true } as CustoFixo
-        const id = await persistCustoFixo(novo, false)
-        novo.id = id
-        updateStore((s) => ({
-          ...s,
-          custosFixos: [...s.custosFixos, novo],
-        }))
+      const id = generateId()
+      const novo: CustoFixo = { ...fixoForm, id, empresaId, ativo: true } as CustoFixo
+      updateStore((s) => ({
+        ...s,
+        custosFixos: [...s.custosFixos, novo],
+      }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_custo_fixo",
@@ -106,21 +96,15 @@ export function CustosTela() {
         motivo: "Novo custo fixo",
       })
     }
-      setFixoDialogOpen(false)
-      await saveSnapshot()
-    } catch (e) {
-      console.error("Erro ao salvar custo fixo:", e)
-    }
+    setFixoDialogOpen(false)
+    saveSnapshot()
   }
 
-  async function saveVar() {
+  function saveVar() {
     if (!varForm.descricao || varForm.valor < 0) return
     if (!podeEditar) return
-    try {
-      if (editingVarId) {
-        const updated: CustoVariavel = { ...store.custosVariaveis.find((c) => c.id === editingVarId)!, ...varForm }
-        await persistCustoVariavel(updated, true)
-        updateStore((s) => ({
+    if (editingVarId) {
+      updateStore((s) => ({
           ...s,
           custosVariaveis: s.custosVariaveis.map((c) =>
             c.id === editingVarId ? { ...c, ...varForm } : c
@@ -136,13 +120,12 @@ export function CustosTela() {
         motivo: "Alteracao de custo variavel",
       })
     } else {
-        const novo: CustoVariavel = { ...varForm, id: "", empresaId, ativo: true } as CustoVariavel
-        const id = await persistCustoVariavel(novo, false)
-        novo.id = id
-        updateStore((s) => ({
-          ...s,
-          custosVariaveis: [...s.custosVariaveis, novo],
-        }))
+      const id = generateId()
+      const novo: CustoVariavel = { ...varForm, id, empresaId, ativo: true } as CustoVariavel
+      updateStore((s) => ({
+        ...s,
+        custosVariaveis: [...s.custosVariaveis, novo],
+      }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_custo_variavel",
@@ -153,21 +136,13 @@ export function CustosTela() {
         motivo: "Novo custo variavel",
       })
     }
-      setVarDialogOpen(false)
-      await saveSnapshot()
-    } catch (e) {
-      console.error("Erro ao salvar custo variavel:", e)
-    }
+    setVarDialogOpen(false)
+    saveSnapshot()
   }
 
-  async   async function removeFixo(id: string) {
+  function removeFixo(id: string) {
     if (!podeEditar) return
-    try {
-      const custo = store.custosFixos.find((c) => c.id === id)
-      if (custo) {
-        await persistCustoFixo({ ...custo, ativo: false }, true)
-      }
-      updateStore((s) => ({
+    updateStore((s) => ({
         ...s,
         custosFixos: s.custosFixos.map((c) =>
           c.id === id ? { ...c, ativo: false } : c
@@ -182,20 +157,12 @@ export function CustosTela() {
       depois: "inativo",
       motivo: "Custo fixo removido",
     })
-      await saveSnapshot()
-    } catch (e) {
-      console.error("Erro ao remover custo fixo:", e)
-    }
+    saveSnapshot()
   }
 
-  async function removeVar(id: string) {
+  function removeVar(id: string) {
     if (!podeEditar) return
-    try {
-      const custo = store.custosVariaveis.find((c) => c.id === id)
-      if (custo) {
-        await persistCustoVariavel({ ...custo, ativo: false }, true)
-      }
-      updateStore((s) => ({
+    updateStore((s) => ({
         ...s,
         custosVariaveis: s.custosVariaveis.map((c) =>
           c.id === id ? { ...c, ativo: false } : c
@@ -210,23 +177,14 @@ export function CustosTela() {
       depois: "inativo",
       motivo: "Custo variavel removido",
     })
-      await saveSnapshot()
-    } catch (e) {
-      console.error("Erro ao remover custo variavel:", e)
-    }
+    saveSnapshot()
   }
 
-  async function updateParametros() {
+  function updateParametros() {
     if (totalPecas <= 0) return
     if (!podeEditar) return
-    try {
-      const antes = JSON.stringify(store.parametrosCusto)
-      await persistParametrosCusto({
-        empresaId,
-        totalPecasEstoque: totalPecas,
-        descontoAVistaFixo: descontoFixo,
-      })
-      updateStore((s) => ({
+    const antes = JSON.stringify(store.parametrosCusto)
+    updateStore((s) => ({
       ...s,
       parametrosCusto: {
         ...s.parametrosCusto,
@@ -246,13 +204,10 @@ export function CustosTela() {
       }),
       motivo: "Parametros atualizados",
     })
-      await saveSnapshot()
-    } catch (e) {
-      console.error("Erro ao atualizar parametros:", e)
-    }
+    saveSnapshot()
   }
 
-  async function saveSnapshot() {
+  function saveSnapshot() {
     const snapshot: SnapshotOverhead = {
       id: generateId(),
       empresaId,
@@ -264,7 +219,6 @@ export function CustosTela() {
       overheadUnitario,
       usuario: sessao.nome,
     }
-    await persistSnapshotOverhead(snapshot)
     updateStore((s) => ({
       ...s,
       snapshotsOverhead: [snapshot, ...s.snapshotsOverhead],
