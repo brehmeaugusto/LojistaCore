@@ -5,10 +5,10 @@ import { useAppStore } from "@/hooks/use-store"
 import {
   updateStore,
   addAuditLog,
-  generateId,
   temPermissao,
   type LinhaPrecificacao,
 } from "@/lib/store"
+import { persistLinhaPrecificacao } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -120,7 +120,7 @@ export function PrecificacaoTela() {
     setDialogOpen(true)
   }
 
-  function save() {
+  async function save() {
     if (!form.codigo || !form.item) return
     if (!podeEditar) return
     const data: Omit<LinhaPrecificacao, "id" | "empresaId"> = {
@@ -136,14 +136,17 @@ export function PrecificacaoTela() {
       modoPrecoAVista: form.modoPrecoAVista,
     }
 
-    if (editingId) {
-      const before = linhas.find((l) => l.id === editingId)
-      updateStore((s) => ({
-        ...s,
-        linhasPrecificacao: s.linhasPrecificacao.map((l) =>
-          l.id === editingId ? { ...l, ...data } : l
-        ),
-      }))
+    try {
+      if (editingId) {
+        const before = linhas.find((l) => l.id === editingId)
+        const updated: LinhaPrecificacao = { ...before!, ...data }
+        await persistLinhaPrecificacao(updated, true)
+        updateStore((s) => ({
+          ...s,
+          linhasPrecificacao: s.linhasPrecificacao.map((l) =>
+            l.id === editingId ? { ...l, ...data } : l
+          ),
+        }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "editar_linha_precificacao",
@@ -154,14 +157,13 @@ export function PrecificacaoTela() {
         motivo: "Edicao de precificacao",
       })
     } else {
-      const id = generateId()
-      updateStore((s) => ({
-        ...s,
-        linhasPrecificacao: [
-          ...s.linhasPrecificacao,
-          { ...data, id, empresaId } as LinhaPrecificacao,
-        ],
-      }))
+        const novo: LinhaPrecificacao = { ...data, id: "", empresaId } as LinhaPrecificacao
+        const id = await persistLinhaPrecificacao(novo, false)
+        novo.id = id
+        updateStore((s) => ({
+          ...s,
+          linhasPrecificacao: [...s.linhasPrecificacao, novo],
+        }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_linha_precificacao",
@@ -172,7 +174,10 @@ export function PrecificacaoTela() {
         motivo: "Nova linha de precificacao",
       })
     }
-    setDialogOpen(false)
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar precificacao:", e)
+    }
   }
 
   return (

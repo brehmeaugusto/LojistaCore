@@ -7,6 +7,7 @@ import {
   isWhiteLabelHabilitado, isWhiteLabelCoresHabilitado,
   BRANDING_DEFAULTS, type BrandingEmpresa, type SessaoUsuario,
 } from "@/lib/store"
+import { persistBranding, deleteBranding } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -70,7 +71,7 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     reader.readAsDataURL(file)
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!empresaId || !wlHabilitado) return
     const trimmedNome = sanitizeNome(nomeExibicao).trim()
     if (!trimmedNome) return
@@ -97,14 +98,17 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
       atualizadoEm: new Date().toISOString(),
     }
 
-    updateStore((s) => ({
-      ...s,
-      branding: brandingAtual
-        ? s.branding.map((b) => b.id === brandingAtual.id ? novoBranding : b)
-        : [...s.branding, novoBranding],
-    }))
+    try {
+      const id = await persistBranding(novoBranding)
+      novoBranding.id = id
+      updateStore((s) => ({
+        ...s,
+        branding: brandingAtual
+          ? s.branding.map((b) => b.id === brandingAtual.id ? novoBranding : b)
+          : [...s.branding, novoBranding],
+      }))
 
-    addAuditLog({
+      addAuditLog({
       usuario: sessao.nome,
       acao: brandingAtual ? "editar_branding" : "criar_branding",
       entidade: "BrandingEmpresa",
@@ -121,11 +125,14 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
       motivo: "Alteracao de identidade visual",
     })
 
-    setSaved(true)
+      setSaved(true)
+    } catch (e) {
+      console.error("Erro ao salvar branding:", e)
+    }
     setTimeout(() => setSaved(false), 2500)
   }
 
-  function handleRestaurar() {
+  async function handleRestaurar() {
     setNomeExibicao(empresa?.nomeFantasia ?? "")
     setLogoPrincipal(null)
     setLogoIcone(null)
@@ -134,6 +141,11 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     setCorDestaque(BRANDING_DEFAULTS.corDestaque)
 
     if (brandingAtual && empresaId) {
+      try {
+        await deleteBranding(empresaId)
+      } catch (e) {
+        console.error("Erro ao restaurar branding:", e)
+      }
       updateStore((s) => ({
         ...s,
         branding: s.branding.filter((b) => b.id !== brandingAtual.id),

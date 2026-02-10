@@ -3,11 +3,13 @@
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
 import {
-  updateStore, addAuditLog, generateId, getModulosLicenciados,
+  updateStore, addAuditLog, getModulosLicenciados,
   MODULOS_CATALOGO,
   type UsuarioEmpresa, type PapelEmpresa, type UsuarioEmpresaStatus,
   type ModuloId, type PermissaoId,
 } from "@/lib/store"
+import { persistUsuario, persistUsuarioStatus } from "@/lib/supabase-persist"
+import { hashSenhaParaStorage } from "@/lib/login-unificado"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -78,20 +80,33 @@ export function UsuariosAcessos() {
     setPermDialogOpen(true)
   }
 
-  function saveUser() {
+  async function saveUser() {
     if (!form.nome || !form.login) return
     const executor = sessao.nome
 
-    if (editingId) {
-      const before = store.usuariosEmpresa.find((u) => u.id === editingId)
-      updateStore((s) => ({
-        ...s,
-        usuariosEmpresa: s.usuariosEmpresa.map((u) =>
-          u.id === editingId
-            ? { ...u, nome: form.nome, login: form.login, papel: form.papel, ...(form.senha ? { senha: form.senha } : {}) }
-            : u
-        ),
-      }))
+    try {
+      if (editingId) {
+        const before = store.usuariosEmpresa.find((u) => u.id === editingId)
+        const senhaHash = form.senha ? await hashSenhaParaStorage(form.senha) : undefined
+        await persistUsuario({
+          id: editingId,
+          empresaId: empresaId!,
+          nome: form.nome,
+          login: form.login,
+          senha: senhaHash,
+          papel: form.papel,
+          status: before?.status ?? "ativo",
+          modulosLiberados: before?.modulosLiberados ?? [],
+          permissoes: before?.permissoes ?? [],
+        }, true)
+        updateStore((s) => ({
+          ...s,
+          usuariosEmpresa: s.usuariosEmpresa.map((u) =>
+            u.id === editingId
+              ? { ...u, nome: form.nome, login: form.login, papel: form.papel }
+              : u
+          ),
+        }))
       addAuditLog({
         usuario: executor,
         acao: "editar_usuario",
@@ -102,24 +117,34 @@ export function UsuariosAcessos() {
         motivo: "Edicao de dados do usuario",
       })
     } else {
-      const id = generateId()
-      const novoUsuario: UsuarioEmpresa = {
-        id,
-        empresaId: empresaId!,
-        nome: form.nome,
-        login: form.login,
-        senha: form.senha || "123456",
-        papel: form.papel,
-        status: "ativo",
-        modulosLiberados: [],
-        permissoes: [],
-        criadoEm: new Date().toISOString().slice(0, 10),
-        ultimoAcesso: "",
-      }
-      updateStore((s) => ({
-        ...s,
-        usuariosEmpresa: [...s.usuariosEmpresa, novoUsuario],
-      }))
+        const senhaHash = await hashSenhaParaStorage(form.senha || "123456")
+        const id = await persistUsuario({
+          empresaId: empresaId!,
+          nome: form.nome,
+          login: form.login,
+          senha: senhaHash,
+          papel: form.papel,
+          status: "ativo",
+          modulosLiberados: [],
+          permissoes: [],
+        }, false)
+        const novoUsuario: UsuarioEmpresa = {
+          id,
+          empresaId: empresaId!,
+          nome: form.nome,
+          login: form.login,
+          senha: "",
+          papel: form.papel,
+          status: "ativo",
+          modulosLiberados: [],
+          permissoes: [],
+          criadoEm: new Date().toISOString().slice(0, 10),
+          ultimoAcesso: "",
+        }
+        updateStore((s) => ({
+          ...s,
+          usuariosEmpresa: [...s.usuariosEmpresa, novoUsuario],
+        }))
       addAuditLog({
         usuario: executor,
         acao: "criar_usuario",
@@ -130,12 +155,17 @@ export function UsuariosAcessos() {
         motivo: "Novo usuario criado",
       })
     }
-    setDialogOpen(false)
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar usuario:", e)
+    }
   }
 
-  function toggleStatus(user: UsuarioEmpresa) {
+  async function toggleStatus(user: UsuarioEmpresa) {
     const novoStatus: UsuarioEmpresaStatus = user.status === "ativo" ? "suspenso" : "ativo"
-    updateStore((s) => ({
+    try {
+      await persistUsuarioStatus(user.id, novoStatus)
+      updateStore((s) => ({
       ...s,
       usuariosEmpresa: s.usuariosEmpresa.map((u) =>
         u.id === user.id ? { ...u, status: novoStatus } : u
@@ -150,6 +180,9 @@ export function UsuariosAcessos() {
       depois: JSON.stringify({ status: novoStatus }),
       motivo: novoStatus === "suspenso" ? "Usuario suspenso pelo admin" : "Usuario reativado pelo admin",
     })
+    } catch (e) {
+      console.error("Erro ao alterar status do usuario:", e)
+    }
   }
 
   function toggleModulo(moduloId: ModuloId) {
@@ -173,10 +206,21 @@ export function UsuariosAcessos() {
     )
   }
 
-  function savePermissions() {
+  async function savePermissions() {
     if (!permUserId) return
-    const before = store.usuariosEmpresa.find((u) => u.id === permUserId)
-    updateStore((s) => ({
+    try {
+      const before = store.usuariosEmpresa.find((u) => u.id === permUserId)
+      await persistUsuario({
+        id: permUserId,
+        empresaId: before!.empresaId,
+        nome: before!.nome,
+        login: before!.login,
+        papel: before!.papel,
+        status: before!.status,
+        modulosLiberados: modulosEdit,
+        permissoes: permissoesEdit,
+      }, true)
+      updateStore((s) => ({
       ...s,
       usuariosEmpresa: s.usuariosEmpresa.map((u) =>
         u.id === permUserId
@@ -199,7 +243,10 @@ export function UsuariosAcessos() {
       }),
       motivo: "Alteracao de modulos e permissoes do usuario",
     })
-    setPermDialogOpen(false)
+      setPermDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar permissoes:", e)
+    }
   }
 
   const permUser = permUserId ? store.usuariosEmpresa.find((u) => u.id === permUserId) : null

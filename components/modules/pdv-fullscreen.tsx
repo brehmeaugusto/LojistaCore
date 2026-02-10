@@ -13,6 +13,12 @@ import {
   type Pagamento,
   type SessaoUsuario,
 } from "@/lib/store"
+import {
+  persistVendaCompleta,
+  persistContaReceber,
+  persistEstoqueSaldo,
+  persistMovimentoEstoque,
+} from "@/lib/supabase-persist"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -206,7 +212,7 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       itensVenda
         .map((i) => {
           if (i.skuId !== skuId) return i
-          const estoqueItem = store.estoque.find((e) => e.skuId === skuId && e.lojaId === "loja1")
+          const estoqueItem = store.estoque.find((e) => e.skuId === skuId && e.lojaId === lojaId)
           const novaQtd = i.quantidade + delta
           if (novaQtd <= 0) return i
           if (novaQtd > (estoqueItem?.disponivel ?? 0)) return i
@@ -242,16 +248,15 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   }
 
   // Finalizar venda
-  function finalizarVenda() {
+  async function finalizarVenda() {
     if (!empresaId || !lojaId) return
     if (itensVenda.length === 0) return
 
     // Se caixa fechado, bloqueia
     if (!caixaAberto) return
 
-    const vendaId = generateId()
     const venda: Venda = {
-      id: vendaId,
+      id: "",
       empresaId,
       lojaId,
       operador: sessao.nome,
@@ -264,6 +269,60 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       desconto: totalDescontos,
       total: totalVenda,
     }
+
+    try {
+      const vendaId = await persistVendaCompleta(venda)
+      venda.id = vendaId
+
+      const newConta = {
+        id: "",
+        empresaId,
+        vendaId,
+        valor: totalVenda,
+        dataVencimento:
+          formaPagamento === "dinheiro" || formaPagamento === "pix"
+            ? new Date().toISOString().split("T")[0]
+            : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                .toISOString()
+                .split("T")[0],
+        status: (formaPagamento === "dinheiro" || formaPagamento === "pix"
+          ? "recebido"
+          : "pendente") as "recebido" | "pendente",
+        formaPagamento,
+      }
+      const contaId = await persistContaReceber(newConta)
+      newConta.id = contaId
+
+      for (const item of itensVenda) {
+        const estoqueItem = store.estoque.find(
+          (e) => e.skuId === item.skuId && e.lojaId === lojaId
+        )
+        const novoDisponivel = (estoqueItem?.disponivel ?? 0) - item.quantidade
+        const estoqueAtualizado = estoqueItem
+          ? { ...estoqueItem, disponivel: novoDisponivel }
+          : {
+              id: "",
+              empresaId,
+              lojaId,
+              skuId: item.skuId,
+              disponivel: novoDisponivel,
+              reservado: 0,
+              emTransito: 0,
+            }
+        await persistEstoqueSaldo(estoqueAtualizado)
+        await persistMovimentoEstoque({
+          id: generateId(),
+          empresaId,
+          lojaId,
+          skuId: item.skuId,
+          tipo: "saida",
+          quantidade: item.quantidade,
+          motivo: `Venda ${vendaId}`,
+          usuario: sessao.nome,
+          dataHora: new Date().toISOString(),
+          referencia: vendaId,
+        })
+      }
 
     updateStore((s) => {
       let newEstoque = [...s.estoque]
@@ -287,23 +346,6 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
           dataHora: new Date().toISOString(),
       referencia: vendaId,
         })
-      }
-
-      const newConta = {
-        id: generateId(),
-        empresaId,
-        vendaId,
-        valor: totalVenda,
-        dataVencimento:
-          formaPagamento === "dinheiro" || formaPagamento === "pix"
-            ? new Date().toISOString().split("T")[0]
-            : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-                .toISOString()
-                .split("T")[0],
-        status: (formaPagamento === "dinheiro" || formaPagamento === "pix"
-          ? "recebido"
-          : "pendente") as "recebido" | "pendente",
-        formaPagamento,
       }
 
       return {
@@ -335,6 +377,9 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       setVendaFinalizada(false)
       searchRef.current?.focus()
     }, 2000)
+    } catch (e) {
+      console.error("Erro ao finalizar venda:", e)
+    }
   }
 
   // Sair do PDV
@@ -359,14 +404,13 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
     onExit()
   }
 
-  function salvarRascunho() {
-    if (itensVenda.length === 0) return
+  async function salvarRascunho() {
+    if (itensVenda.length === 0 || !lojaId) return
 
-    const vendaId = generateId()
     const venda: Venda = {
-      id: vendaId,
+      id: "",
       empresaId,
-      lojaId: "loja1",
+      lojaId,
       operador: sessao.nome,
       vendedor: sessao.nome,
       clienteId: clienteSelecionado,
@@ -378,12 +422,15 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       total: totalVenda,
     }
 
-    updateStore((s) => ({
-      ...s,
-      vendas: [...s.vendas, venda],
-    }))
+    try {
+      const vendaId = await persistVendaCompleta(venda)
+      venda.id = vendaId
+      updateStore((s) => ({
+        ...s,
+        vendas: [...s.vendas, venda],
+      }))
 
-    addAuditLog({
+      addAuditLog({
       usuario: sessao.nome,
       acao: "salvar_rascunho_pdv",
       entidade: "Venda",
@@ -393,8 +440,11 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       motivo: "Venda salva como rascunho ao sair do PDV fullscreen",
     })
 
-    setItensVenda([])
-    confirmExit()
+      setItensVenda([])
+      confirmExit()
+    } catch (e) {
+      console.error("Erro ao salvar rascunho:", e)
+    }
   }
 
   function cancelarVendaESair() {
@@ -514,7 +564,7 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                 {filteredSKUs.map((sku) => {
                   const produto = store.produtos.find((p) => p.id === sku.produtoId)
                   const estoqueItem = store.estoque.find(
-                    (e) => e.skuId === sku.id && e.lojaId === "loja1"
+                    (e) => e.skuId === sku.id && e.lojaId === lojaId
                   )
                   const semEstoque = !estoqueItem || estoqueItem.disponivel <= 0
                   return (

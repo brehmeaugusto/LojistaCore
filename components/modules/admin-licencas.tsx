@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, generateId, type Plano, type LicencaEmpresa, type LicencaStatus } from "@/lib/store"
+import { updateStore, addAuditLog, type Plano, type LicencaEmpresa, type LicencaStatus } from "@/lib/store"
+import { persistPlano, persistLicenca } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,37 +37,51 @@ export function AdminLicencas() {
     whiteLabelHabilitado: false, whiteLabelCores: false,
   })
 
-  function savePlano() {
+  async function savePlano() {
     if (!planoForm.nome) return
-    if (editingPlanoId) {
-      updateStore((s) => ({
-        ...s,
-        planos: s.planos.map((p) => p.id === editingPlanoId ? { ...p, ...planoForm } : p),
-      }))
-      addAuditLog({ usuario: "Admin Global", acao: "editar_plano", entidade: "Plano", entidadeId: editingPlanoId, antes: "", depois: JSON.stringify(planoForm), motivo: "Edicao de plano" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, planos: [...s.planos, { ...planoForm, id } as Plano] }))
-      addAuditLog({ usuario: "Admin Global", acao: "criar_plano", entidade: "Plano", entidadeId: id, antes: "", depois: JSON.stringify(planoForm), motivo: "Novo plano criado" })
+    try {
+      const data: Plano = editingPlanoId
+        ? { ...store.planos.find((p) => p.id === editingPlanoId)!, ...planoForm }
+        : { ...planoForm, id: "" } as Plano
+      const id = await persistPlano(data, !!editingPlanoId)
+      if (editingPlanoId) {
+        updateStore((s) => ({
+          ...s,
+          planos: s.planos.map((p) => p.id === editingPlanoId ? { ...p, ...planoForm } : p),
+        }))
+        addAuditLog({ usuario: "Admin Global", acao: "editar_plano", entidade: "Plano", entidadeId: editingPlanoId, antes: "", depois: JSON.stringify(planoForm), motivo: "Edicao de plano" })
+      } else {
+        updateStore((s) => ({ ...s, planos: [...s.planos, { ...planoForm, id } as Plano] }))
+        addAuditLog({ usuario: "Admin Global", acao: "criar_plano", entidade: "Plano", entidadeId: id, antes: "", depois: JSON.stringify(planoForm), motivo: "Novo plano criado" })
+      }
+      setPlanoDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar plano:", e)
     }
-    setPlanoDialogOpen(false)
   }
 
-  function saveLicenca() {
+  async function saveLicenca() {
     if (!licForm.empresaId || !licForm.planoId) return
-    if (editingLicId) {
+    try {
+      const data: LicencaEmpresa = editingLicId
+        ? { ...store.licencas.find((l) => l.id === editingLicId)!, ...licForm }
+        : { ...licForm, id: "" } as LicencaEmpresa
+      const id = await persistLicenca(data, !!editingLicId)
       const before = store.licencas.find((l) => l.id === editingLicId)
-      updateStore((s) => ({
-        ...s,
-        licencas: s.licencas.map((l) => l.id === editingLicId ? { ...l, ...licForm } : l),
-      }))
-      addAuditLog({ usuario: "Admin Global", acao: "editar_licenca", entidade: "Licenca", entidadeId: editingLicId, antes: JSON.stringify(before), depois: JSON.stringify(licForm), motivo: "Alteracao de licenca" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, licencas: [...s.licencas, { ...licForm, id } as LicencaEmpresa] }))
-      addAuditLog({ usuario: "Admin Global", acao: "criar_licenca", entidade: "Licenca", entidadeId: id, antes: "", depois: JSON.stringify(licForm), motivo: "Nova licenca atribuida" })
+      if (editingLicId) {
+        updateStore((s) => ({
+          ...s,
+          licencas: s.licencas.map((l) => l.id === editingLicId ? { ...l, ...licForm } : l),
+        }))
+        addAuditLog({ usuario: "Admin Global", acao: "editar_licenca", entidade: "Licenca", entidadeId: editingLicId, antes: JSON.stringify(before), depois: JSON.stringify(licForm), motivo: "Alteracao de licenca" })
+      } else {
+        updateStore((s) => ({ ...s, licencas: [...s.licencas, { ...licForm, id } as LicencaEmpresa] }))
+        addAuditLog({ usuario: "Admin Global", acao: "criar_licenca", entidade: "Licenca", entidadeId: id, antes: "", depois: JSON.stringify(licForm), motivo: "Nova licenca atribuida" })
+      }
+      setLicDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar licenca:", e)
     }
-    setLicDialogOpen(false)
   }
 
   const moduloLabels: Record<string, string> = {

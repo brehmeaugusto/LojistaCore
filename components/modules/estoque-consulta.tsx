@@ -8,6 +8,7 @@ import {
   generateId,
   temPermissao,
 } from "@/lib/store"
+import { persistEstoqueSaldo, persistMovimentoEstoque } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -77,7 +78,7 @@ export function EstoqueConsulta() {
     .filter((m) => m.empresaId === empresaId && m.lojaId === filtroLoja)
     .sort((a, b) => new Date(b.dataHora).getTime() - new Date(a.dataHora).getTime())
 
-  function realizarAjuste() {
+  async function realizarAjuste() {
     if (!temPermissao(usuarioId, "ESTOQUE_AJUSTE")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -100,28 +101,41 @@ export function EstoqueConsulta() {
     )
     const novoDisponivel = (estoqueItem?.disponivel ?? 0) + qtd
 
-    updateStore((s) => ({
-      ...s,
-      estoque: s.estoque.map((e) =>
-        e.skuId === ajusteSku && e.lojaId === filtroLoja
-          ? { ...e, disponivel: novoDisponivel }
-          : e
-      ),
-      movimentosEstoque: [
-        ...s.movimentosEstoque,
-        {
-          id: generateId(),
+    const estoqueAtualizado = estoqueItem
+      ? { ...estoqueItem, disponivel: novoDisponivel }
+      : {
+          id: "",
           empresaId,
           lojaId: filtroLoja,
           skuId: ajusteSku,
-          tipo: "ajuste" as const,
-          quantidade: qtd,
-          motivo: ajusteMotivo || "Ajuste manual",
-          usuario: sessao.nome,
-          dataHora: new Date().toISOString(),
-          referencia: "",
-        },
-      ],
+          disponivel: novoDisponivel,
+          reservado: 0,
+          emTransito: 0,
+        }
+    const saldoId = await persistEstoqueSaldo(estoqueAtualizado)
+    if (!estoqueItem) estoqueAtualizado.id = saldoId
+    const movimento = {
+      id: generateId(),
+      empresaId,
+      lojaId: filtroLoja,
+      skuId: ajusteSku,
+      tipo: "ajuste" as const,
+      quantidade: qtd,
+      motivo: ajusteMotivo || "Ajuste manual",
+      usuario: sessao.nome,
+      dataHora: new Date().toISOString(),
+      referencia: "",
+    }
+    await persistMovimentoEstoque(movimento)
+
+    updateStore((s) => ({
+      ...s,
+      estoque: s.estoque.some((e) => e.skuId === ajusteSku && e.lojaId === filtroLoja)
+        ? s.estoque.map((e) =>
+            e.skuId === ajusteSku && e.lojaId === filtroLoja ? estoqueAtualizado : e
+          )
+        : [...s.estoque, estoqueAtualizado],
+      movimentosEstoque: [...s.movimentosEstoque, movimento],
     }))
 
     addAuditLog({
@@ -140,7 +154,7 @@ export function EstoqueConsulta() {
     setAjusteMotivo("")
   }
 
-  function realizarTransferencia() {
+  async function realizarTransferencia() {
     if (!temPermissao(usuarioId, "ESTOQUE_TRANSFERIR")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -158,34 +172,45 @@ export function EstoqueConsulta() {
     const qtd = Number(transfQtd)
     if (qtd <= 0) return
 
+    const origem = store.estoque.find((e) => e.skuId === transfSku && e.lojaId === filtroLoja)
+    const destino = store.estoque.find((e) => e.skuId === transfSku && e.lojaId === transfDestino)
+    const origemAtualizado = origem ? { ...origem, disponivel: origem.disponivel - qtd } : null
+    const destinoAtualizado = destino
+      ? { ...destino, emTransito: destino.emTransito + qtd }
+      : {
+          id: "",
+          empresaId,
+          lojaId: transfDestino,
+          skuId: transfSku,
+          disponivel: 0,
+          reservado: 0,
+          emTransito: qtd,
+        }
+    if (origemAtualizado) await persistEstoqueSaldo(origemAtualizado)
+    const destId = await persistEstoqueSaldo(destinoAtualizado)
+    if (!destino) destinoAtualizado.id = destId
+    const movimento = {
+      id: generateId(),
+      empresaId,
+      lojaId: filtroLoja,
+      skuId: transfSku,
+      tipo: "transferencia" as const,
+      quantidade: -qtd,
+      motivo: `Transferencia para ${lojas.find((l) => l.id === transfDestino)?.nome}`,
+      usuario: sessao.nome,
+      dataHora: new Date().toISOString(),
+      referencia: transfDestino,
+    }
+    await persistMovimentoEstoque(movimento)
+
     updateStore((s) => ({
       ...s,
       estoque: s.estoque.map((e) => {
-        if (e.skuId === transfSku && e.lojaId === filtroLoja) {
-          return { ...e, disponivel: e.disponivel - qtd }
-        }
-        if (e.skuId === transfSku && e.lojaId === transfDestino) {
-          return { ...e, emTransito: e.emTransito + qtd }
-        }
+        if (e.skuId === transfSku && e.lojaId === filtroLoja) return origemAtualizado!
+        if (e.skuId === transfSku && e.lojaId === transfDestino) return destinoAtualizado
         return e
-      }),
-      movimentosEstoque: [
-        ...s.movimentosEstoque,
-        {
-          id: generateId(),
-          empresaId,
-          lojaId: filtroLoja,
-          skuId: transfSku,
-          tipo: "transferencia" as const,
-          quantidade: -qtd,
-          motivo: `Transferencia para ${
-            lojas.find((l) => l.id === transfDestino)?.nome
-          }`,
-          usuario: sessao.nome,
-          dataHora: new Date().toISOString(),
-          referencia: transfDestino,
-        },
-      ],
+      }).concat(destino ? [] : [destinoAtualizado]),
+      movimentosEstoque: [...s.movimentosEstoque, movimento],
     }))
 
     addAuditLog({
@@ -229,7 +254,7 @@ export function EstoqueConsulta() {
                   <Select value={ajusteSku} onValueChange={setAjusteSku}>
                     <SelectTrigger><SelectValue placeholder="Selecione um SKU" /></SelectTrigger>
                     <SelectContent>
-                      {store.skus.filter((s) => s.empresaId === "emp1").map((s) => (
+                      {store.skus.filter((s) => s.empresaId === empresaId).map((s) => (
                         <SelectItem key={s.id} value={s.id}>{s.codigo}</SelectItem>
                       ))}
                     </SelectContent>
@@ -264,7 +289,7 @@ export function EstoqueConsulta() {
                   <Select value={transfSku} onValueChange={setTransfSku}>
                     <SelectTrigger><SelectValue placeholder="Selecione um SKU" /></SelectTrigger>
                     <SelectContent>
-                      {store.skus.filter((s) => s.empresaId === "emp1").map((s) => (
+                      {store.skus.filter((s) => s.empresaId === empresaId).map((s) => (
                         <SelectItem key={s.id} value={s.id}>{s.codigo}</SelectItem>
                       ))}
                     </SelectContent>

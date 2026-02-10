@@ -9,7 +9,14 @@ import {
   temPermissao,
   type CustoFixo,
   type CustoVariavel,
+  type SnapshotOverhead,
 } from "@/lib/store"
+import {
+  persistCustoFixo,
+  persistCustoVariavel,
+  persistParametrosCusto,
+  persistSnapshotOverhead,
+} from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -64,11 +71,14 @@ export function CustosTela() {
   const totalCustos = totalFixos + totalVariaveis
   const overheadUnitario = totalPecas > 0 ? totalCustos / totalPecas : 0
 
-  function saveFixo() {
+  async function saveFixo() {
     if (!fixoForm.descricao || fixoForm.valor < 0) return
     if (!podeEditar) return
-    if (editingFixoId) {
-      updateStore((s) => ({ ...s, custosFixos: s.custosFixos.map((c) => c.id === editingFixoId ? { ...c, ...fixoForm } : c) }))
+    try {
+      if (editingFixoId) {
+        const updated: CustoFixo = { ...store.custosFixos.find((c) => c.id === editingFixoId)!, ...fixoForm }
+        await persistCustoFixo(updated, true)
+        updateStore((s) => ({ ...s, custosFixos: s.custosFixos.map((c) => c.id === editingFixoId ? { ...c, ...fixoForm } : c) }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "editar_custo_fixo",
@@ -79,14 +89,13 @@ export function CustosTela() {
         motivo: "Alteracao de custo fixo",
       })
     } else {
-      const id = generateId()
-      updateStore((s) => ({
-        ...s,
-        custosFixos: [
-          ...s.custosFixos,
-          { ...fixoForm, id, empresaId, ativo: true } as CustoFixo,
-        ],
-      }))
+        const novo: CustoFixo = { ...fixoForm, id: "", empresaId, ativo: true } as CustoFixo
+        const id = await persistCustoFixo(novo, false)
+        novo.id = id
+        updateStore((s) => ({
+          ...s,
+          custosFixos: [...s.custosFixos, novo],
+        }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_custo_fixo",
@@ -97,20 +106,26 @@ export function CustosTela() {
         motivo: "Novo custo fixo",
       })
     }
-    setFixoDialogOpen(false)
-    saveSnapshot()
+      setFixoDialogOpen(false)
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro ao salvar custo fixo:", e)
+    }
   }
 
-  function saveVar() {
+  async function saveVar() {
     if (!varForm.descricao || varForm.valor < 0) return
     if (!podeEditar) return
-    if (editingVarId) {
-      updateStore((s) => ({
-        ...s,
-        custosVariaveis: s.custosVariaveis.map((c) =>
-          c.id === editingVarId ? { ...c, ...varForm } : c
-        ),
-      }))
+    try {
+      if (editingVarId) {
+        const updated: CustoVariavel = { ...store.custosVariaveis.find((c) => c.id === editingVarId)!, ...varForm }
+        await persistCustoVariavel(updated, true)
+        updateStore((s) => ({
+          ...s,
+          custosVariaveis: s.custosVariaveis.map((c) =>
+            c.id === editingVarId ? { ...c, ...varForm } : c
+          ),
+        }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "editar_custo_variavel",
@@ -121,14 +136,13 @@ export function CustosTela() {
         motivo: "Alteracao de custo variavel",
       })
     } else {
-      const id = generateId()
-      updateStore((s) => ({
-        ...s,
-        custosVariaveis: [
-          ...s.custosVariaveis,
-          { ...varForm, id, empresaId, ativo: true } as CustoVariavel,
-        ],
-      }))
+        const novo: CustoVariavel = { ...varForm, id: "", empresaId, ativo: true } as CustoVariavel
+        const id = await persistCustoVariavel(novo, false)
+        novo.id = id
+        updateStore((s) => ({
+          ...s,
+          custosVariaveis: [...s.custosVariaveis, novo],
+        }))
       addAuditLog({
         usuario: sessao.nome,
         acao: "criar_custo_variavel",
@@ -139,18 +153,26 @@ export function CustosTela() {
         motivo: "Novo custo variavel",
       })
     }
-    setVarDialogOpen(false)
-    saveSnapshot()
+      setVarDialogOpen(false)
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro ao salvar custo variavel:", e)
+    }
   }
 
-  function removeFixo(id: string) {
+  async   async function removeFixo(id: string) {
     if (!podeEditar) return
-    updateStore((s) => ({
-      ...s,
-      custosFixos: s.custosFixos.map((c) =>
-        c.id === id ? { ...c, ativo: false } : c
-      ),
-    }))
+    try {
+      const custo = store.custosFixos.find((c) => c.id === id)
+      if (custo) {
+        await persistCustoFixo({ ...custo, ativo: false }, true)
+      }
+      updateStore((s) => ({
+        ...s,
+        custosFixos: s.custosFixos.map((c) =>
+          c.id === id ? { ...c, ativo: false } : c
+        ),
+      }))
     addAuditLog({
       usuario: sessao.nome,
       acao: "remover_custo_fixo",
@@ -160,17 +182,25 @@ export function CustosTela() {
       depois: "inativo",
       motivo: "Custo fixo removido",
     })
-    saveSnapshot()
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro ao remover custo fixo:", e)
+    }
   }
 
-  function removeVar(id: string) {
+  async function removeVar(id: string) {
     if (!podeEditar) return
-    updateStore((s) => ({
-      ...s,
-      custosVariaveis: s.custosVariaveis.map((c) =>
-        c.id === id ? { ...c, ativo: false } : c
-      ),
-    }))
+    try {
+      const custo = store.custosVariaveis.find((c) => c.id === id)
+      if (custo) {
+        await persistCustoVariavel({ ...custo, ativo: false }, true)
+      }
+      updateStore((s) => ({
+        ...s,
+        custosVariaveis: s.custosVariaveis.map((c) =>
+          c.id === id ? { ...c, ativo: false } : c
+        ),
+      }))
     addAuditLog({
       usuario: sessao.nome,
       acao: "remover_custo_variavel",
@@ -180,14 +210,23 @@ export function CustosTela() {
       depois: "inativo",
       motivo: "Custo variavel removido",
     })
-    saveSnapshot()
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro ao remover custo variavel:", e)
+    }
   }
 
-  function updateParametros() {
+  async function updateParametros() {
     if (totalPecas <= 0) return
     if (!podeEditar) return
-    const antes = JSON.stringify(store.parametrosCusto)
-    updateStore((s) => ({
+    try {
+      const antes = JSON.stringify(store.parametrosCusto)
+      await persistParametrosCusto({
+        empresaId,
+        totalPecasEstoque: totalPecas,
+        descontoAVistaFixo: descontoFixo,
+      })
+      updateStore((s) => ({
       ...s,
       parametrosCusto: {
         ...s.parametrosCusto,
@@ -207,27 +246,28 @@ export function CustosTela() {
       }),
       motivo: "Parametros atualizados",
     })
-    saveSnapshot()
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro ao atualizar parametros:", e)
+    }
   }
 
-  function saveSnapshot() {
-    const id = generateId()
+  async function saveSnapshot() {
+    const snapshot: SnapshotOverhead = {
+      id: generateId(),
+      empresaId,
+      dataHora: new Date().toISOString(),
+      totalCustosFixos: totalFixos,
+      totalCustosVariaveis: totalVariaveis,
+      totalCustos,
+      totalPecas,
+      overheadUnitario,
+      usuario: sessao.nome,
+    }
+    await persistSnapshotOverhead(snapshot)
     updateStore((s) => ({
       ...s,
-      snapshotsOverhead: [
-        {
-          id,
-          empresaId,
-          dataHora: new Date().toISOString(),
-          totalCustosFixos: totalFixos,
-          totalCustosVariaveis: totalVariaveis,
-          totalCustos,
-          totalPecas,
-          overheadUnitario,
-          usuario: sessao.nome,
-        },
-        ...s.snapshotsOverhead,
-      ],
+      snapshotsOverhead: [snapshot, ...s.snapshotsOverhead],
     }))
   }
 

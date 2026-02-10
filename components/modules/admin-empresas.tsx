@@ -11,6 +11,7 @@ import {
 } from "@/lib/store";
 import { hashSenhaParaStorage } from "@/lib/login-unificado";
 import { supabase } from "@/lib/supabaseClient";
+import { persistEmpresaStatus } from "@/lib/supabase-persist";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -212,24 +213,29 @@ export function AdminEmpresas() {
     }
   }
 
-  function toggleStatus(empresa: Empresa) {
+  async function toggleStatus(empresa: Empresa) {
     const newStatus: EmpresaStatus =
       empresa.status === "ativa" ? "suspensa" : "ativa";
-    updateStore((s) => ({
-      ...s,
-      empresas: s.empresas.map((e) =>
-        e.id === empresa.id ? { ...e, status: newStatus } : e,
-      ),
-    }));
-    addAuditLog({
-      usuario: "Admin Global",
-      acao: newStatus === "suspensa" ? "suspender_empresa" : "reativar_empresa",
-      entidade: "Empresa",
-      entidadeId: empresa.id,
-      antes: empresa.status,
-      depois: newStatus,
-      motivo: `Empresa ${newStatus === "suspensa" ? "suspensa" : "reativada"} via painel`,
-    });
+    try {
+      await persistEmpresaStatus(empresa.id, newStatus);
+      updateStore((s) => ({
+        ...s,
+        empresas: s.empresas.map((e) =>
+          e.id === empresa.id ? { ...e, status: newStatus } : e,
+        ),
+      }));
+      addAuditLog({
+        usuario: "Admin Global",
+        acao: newStatus === "suspensa" ? "suspender_empresa" : "reativar_empresa",
+        entidade: "Empresa",
+        entidadeId: empresa.id,
+        antes: empresa.status,
+        depois: newStatus,
+        motivo: `Empresa ${newStatus === "suspensa" ? "suspensa" : "reativada"} via painel`,
+      });
+    } catch (e) {
+      console.error("Erro ao alterar status da empresa:", e);
+    }
   }
 
   function openAdminDialog(empresa: Empresa) {

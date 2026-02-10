@@ -11,6 +11,12 @@ import {
   type VendaItem,
   type Pagamento,
 } from "@/lib/store"
+import {
+  persistVendaCompleta,
+  persistContaReceber,
+  persistEstoqueSaldo,
+  persistMovimentoEstoque,
+} from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -110,7 +116,7 @@ export function PDVTela() {
     setItensVenda(itensVenda.filter((i) => i.skuId !== skuId))
   }
 
-  function finalizarVenda() {
+  async function finalizarVenda() {
     if (!temPermissao(usuarioId, "PDV_VENDER")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -127,11 +133,11 @@ export function PDVTela() {
     if (!caixaAberto) return
     if (itensVenda.length === 0) return
 
-    const vendaId = generateId()
+    const lojaIdVenda = lojaId ?? caixaAberto.lojaId
     const venda: Venda = {
-      id: vendaId,
+      id: "",
       empresaId,
-      lojaId: lojaId ?? caixaAberto.lojaId,
+      lojaId: lojaIdVenda,
       operador: caixaAberto.operador,
       vendedor: vendedor || caixaAberto.operador,
       clienteId: "",
@@ -145,33 +151,12 @@ export function PDVTela() {
       total: totalVenda,
     }
 
-    // Update store: add sale, deduct stock, add financial record
-    updateStore((s) => {
-      let newEstoque = [...s.estoque]
-      const newMovimentos = [...s.movimentosEstoque]
-
-      for (const item of itensVenda) {
-        newEstoque = newEstoque.map((e) =>
-          e.skuId === item.skuId && e.lojaId === (lojaId ?? caixaAberto.lojaId)
-            ? { ...e, disponivel: e.disponivel - item.quantidade }
-            : e
-        )
-        newMovimentos.push({
-          id: generateId(),
-          empresaId,
-          lojaId: lojaId ?? caixaAberto.lojaId,
-          skuId: item.skuId,
-          tipo: "saida",
-          quantidade: item.quantidade,
-          motivo: `Venda ${vendaId}`,
-          usuario: sessao.nome,
-          dataHora: new Date().toISOString(),
-          referencia: vendaId,
-        })
-      }
+    try {
+      const vendaId = await persistVendaCompleta(venda)
+      venda.id = vendaId
 
       const newConta = {
-        id: generateId(),
+        id: "",
         empresaId,
         vendaId,
         valor: totalVenda,
@@ -186,6 +171,64 @@ export function PDVTela() {
           : "pendente") as "recebido" | "pendente",
         formaPagamento,
       }
+      const contaId = await persistContaReceber(newConta)
+      newConta.id = contaId
+
+      for (const item of itensVenda) {
+        const estoqueItem = store.estoque.find(
+          (e) => e.skuId === item.skuId && e.lojaId === lojaIdVenda
+        )
+        const novoDisponivel = (estoqueItem?.disponivel ?? 0) - item.quantidade
+        const estoqueAtualizado = estoqueItem
+          ? { ...estoqueItem, disponivel: novoDisponivel }
+          : {
+              id: "",
+              empresaId,
+              lojaId: lojaIdVenda,
+              skuId: item.skuId,
+              disponivel: novoDisponivel,
+              reservado: 0,
+              emTransito: 0,
+            }
+        await persistEstoqueSaldo(estoqueAtualizado)
+        await persistMovimentoEstoque({
+          id: generateId(),
+          empresaId,
+          lojaId: lojaIdVenda,
+          skuId: item.skuId,
+          tipo: "saida",
+          quantidade: item.quantidade,
+          motivo: `Venda ${vendaId}`,
+          usuario: sessao.nome,
+          dataHora: new Date().toISOString(),
+          referencia: vendaId,
+        })
+      }
+
+    // Update store: add sale, deduct stock, add financial record
+    updateStore((s) => {
+      let newEstoque = [...s.estoque]
+      const newMovimentos = [...s.movimentosEstoque]
+
+      for (const item of itensVenda) {
+        newEstoque = newEstoque.map((e) =>
+          e.skuId === item.skuId && e.lojaId === lojaIdVenda
+            ? { ...e, disponivel: e.disponivel - item.quantidade }
+            : e
+        )
+        newMovimentos.push({
+          id: generateId(),
+          empresaId,
+          lojaId: lojaIdVenda,
+          skuId: item.skuId,
+          tipo: "saida",
+          quantidade: item.quantidade,
+          motivo: `Venda ${vendaId}`,
+          usuario: sessao.nome,
+          dataHora: new Date().toISOString(),
+          referencia: vendaId,
+        })
+      }
 
       return {
         ...s,
@@ -196,7 +239,7 @@ export function PDVTela() {
       }
     })
 
-    addAuditLog({
+      addAuditLog({
       usuario: sessao.nome,
       acao: "finalizar_venda",
       entidade: "Venda",
@@ -206,8 +249,11 @@ export function PDVTela() {
       motivo: "Venda finalizada no PDV",
     })
 
-    setItensVenda([])
-    setVendedor("")
+      setItensVenda([])
+      setVendedor("")
+    } catch (e) {
+      console.error("Erro ao finalizar venda:", e)
+    }
   }
 
   const formaIcons: Record<string, typeof CreditCard> = {
@@ -261,7 +307,7 @@ export function PDVTela() {
                     <div className="mt-2 border rounded-lg max-h-48 overflow-auto">
                       {filteredSKUs.map((sku) => {
                         const produto = store.produtos.find((p) => p.id === sku.produtoId)
-                        const estoqueItem = store.estoque.find((e) => e.skuId === sku.id && e.lojaId === "loja1")
+                        const estoqueItem = store.estoque.find((e) => e.skuId === sku.id && e.lojaId === lojaId)
                         return (
                           <button
                             key={sku.id}

@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, generateId, type SKU } from "@/lib/store"
+import { updateStore, addAuditLog, type SKU } from "@/lib/store"
+import { persistSKU } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,25 +20,41 @@ export function CadastrosSKUs() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ produtoId: "", cor: "", tamanho: "", codigo: "", status: "ativo" as const })
   const [search, setSearch] = useState("")
+  const [saving, setSaving] = useState(false)
 
-  const skus = store.skus.filter((s) => s.empresaId === "emp1")
-  const produtos = store.produtos.filter((p) => p.empresaId === "emp1")
+  const sessao = store.sessao
+  const empresaId = sessao?.tipo === "usuario_empresa" ? sessao.empresaId : null
+  if (!empresaId) return null
+
+  const skus = store.skus.filter((s) => s.empresaId === empresaId)
+  const produtos = store.produtos.filter((p) => p.empresaId === empresaId)
 
   const filtered = skus.filter(
     (s) => s.codigo.toLowerCase().includes(search.toLowerCase()) || s.cor.toLowerCase().includes(search.toLowerCase())
   )
 
-  function save() {
+  async function save() {
     if (!form.produtoId || !form.cor || !form.tamanho || !form.codigo) return
-    if (editingId) {
-      updateStore((s) => ({ ...s, skus: s.skus.map((sk) => sk.id === editingId ? { ...sk, ...form, precoBase: 0 } : sk) }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "editar_sku", entidade: "SKU", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, skus: [...s.skus, { ...form, id, empresaId: "emp1", precoBase: 0 } as SKU] }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "criar_sku", entidade: "SKU", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo SKU" })
+    setSaving(true)
+    try {
+      if (editingId) {
+        const updated: SKU = { ...store.skus.find((s) => s.id === editingId)!, ...form, precoBase: 0 }
+        await persistSKU(updated, true)
+        updateStore((s) => ({ ...s, skus: s.skus.map((sk) => sk.id === editingId ? { ...sk, ...form, precoBase: 0 } : sk) }))
+        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "editar_sku", entidade: "SKU", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
+      } else {
+        const novo: SKU = { ...form, id: "", empresaId, precoBase: 0 } as SKU
+        const id = await persistSKU(novo, false)
+        novo.id = id
+        updateStore((s) => ({ ...s, skus: [...s.skus, novo] }))
+        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "criar_sku", entidade: "SKU", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo SKU" })
+      }
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar SKU:", e)
+    } finally {
+      setSaving(false)
     }
-    setDialogOpen(false)
   }
 
   function getProdutoNome(produtoId: string) {
@@ -135,7 +152,7 @@ export function CadastrosSKUs() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save} disabled={saving} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">{saving ? "Salvando..." : "Salvar"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

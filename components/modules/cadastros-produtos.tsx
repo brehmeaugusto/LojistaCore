@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, generateId, type Produto } from "@/lib/store"
+import { updateStore, addAuditLog, type Produto } from "@/lib/store"
+import { persistProduto } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -21,23 +22,39 @@ export function CadastrosProdutos() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyProduto)
   const [search, setSearch] = useState("")
+  const [saving, setSaving] = useState(false)
 
-  const produtos = store.produtos.filter((p) => p.empresaId === "emp1")
+  const sessao = store.sessao
+  const empresaId = sessao?.tipo === "usuario_empresa" ? sessao.empresaId : null
+  if (!empresaId) return null
+
+  const produtos = store.produtos.filter((p) => p.empresaId === empresaId)
   const filtered = produtos.filter(
     (p) => p.nome.toLowerCase().includes(search.toLowerCase()) || p.codigoInterno.toLowerCase().includes(search.toLowerCase())
   )
 
-  function save() {
+  async function save() {
     if (!form.codigoInterno || !form.nome) return
-    if (editingId) {
-      updateStore((s) => ({ ...s, produtos: s.produtos.map((p) => p.id === editingId ? { ...p, ...form } : p) }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "editar_produto", entidade: "Produto", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, produtos: [...s.produtos, { ...form, id, empresaId: "emp1" } as Produto] }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "criar_produto", entidade: "Produto", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo produto" })
+    setSaving(true)
+    try {
+      if (editingId) {
+        const updated: Produto = { ...store.produtos.find((p) => p.id === editingId)!, ...form }
+        await persistProduto(updated, true)
+        updateStore((s) => ({ ...s, produtos: s.produtos.map((p) => p.id === editingId ? { ...p, ...form } : p) }))
+        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "editar_produto", entidade: "Produto", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
+      } else {
+        const novo: Produto = { ...form, id: "", empresaId } as Produto
+        const id = await persistProduto(novo, false)
+        novo.id = id
+        updateStore((s) => ({ ...s, produtos: [...s.produtos, novo] }))
+        addAuditLog({ usuario: sessao?.nome ?? "Sistema", acao: "criar_produto", entidade: "Produto", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo produto" })
+      }
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro ao salvar produto:", e)
+    } finally {
+      setSaving(false)
     }
-    setDialogOpen(false)
   }
 
   return (
@@ -119,7 +136,7 @@ export function CadastrosProdutos() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save} disabled={saving} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">{saving ? "Salvando..." : "Salvar"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

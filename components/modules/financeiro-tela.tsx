@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
 import { updateStore, addAuditLog, temPermissao } from "@/lib/store"
+import { persistContaReceberStatus } from "@/lib/supabase-persist"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -54,7 +55,7 @@ export function FinanceiroTela() {
     .reduce((s, c) => s + c.valor, 0)
   const totalGeral = contas.reduce((s, c) => s + c.valor, 0)
 
-  function marcarComoRecebido(id: string) {
+  async function marcarComoRecebido(id: string) {
     if (!podeBaixar) {
       addAuditLog({
         usuario: sessao.nome,
@@ -68,13 +69,15 @@ export function FinanceiroTela() {
       return
     }
 
-    updateStore((s) => ({
-      ...s,
-      contasReceber: s.contasReceber.map((c) =>
-        c.id === id ? { ...c, status: "recebido" as const } : c
-      ),
-    }))
-    addAuditLog({
+    try {
+      await persistContaReceberStatus(id, "recebido")
+      updateStore((s) => ({
+        ...s,
+        contasReceber: s.contasReceber.map((c) =>
+          c.id === id ? { ...c, status: "recebido" as const } : c
+        ),
+      }))
+      addAuditLog({
       usuario: sessao.nome,
       acao: "baixa_conta_receber",
       entidade: "ContaReceber",
@@ -83,6 +86,9 @@ export function FinanceiroTela() {
       depois: JSON.stringify({ status: "recebido" }),
       motivo: "Baixa manual",
     })
+    } catch (e) {
+      console.error("Erro ao dar baixa:", e)
+    }
   }
 
   return (
