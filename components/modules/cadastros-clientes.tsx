@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
 import { updateStore, addAuditLog, generateId, type Cliente } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,38 +14,136 @@ import { Plus, Pencil } from "lucide-react"
 
 export function CadastrosClientes() {
   const store = useAppStore()
+  const sessao = store.sessao
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ nome: "", cpf: "", email: "", telefone: "" })
   const [search, setSearch] = useState("")
 
-  const clientes = store.clientes.filter((c) => c.empresaId === "emp1")
+  // Se não estiver logado em uma empresa, não renderiza o cadastro
+  if (!sessao || sessao.tipo !== "usuario_empresa" || !sessao.empresaId) {
+    return null
+  }
+
+  const empresaId = sessao.empresaId
+
+  const clientes = store.clientes.filter((c) => c.empresaId === empresaId)
   const filtered = clientes.filter(
     (c) => c.nome.toLowerCase().includes(search.toLowerCase()) || c.cpf.includes(search)
   )
 
-  function save() {
+  async function save() {
     if (!form.nome) return
-    if (editingId) {
-      updateStore((s) => ({ ...s, clientes: s.clientes.map((c) => c.id === editingId ? { ...c, ...form } : c) }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "editar_cliente", entidade: "Cliente", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, clientes: [...s.clientes, { ...form, id, empresaId: "emp1", criadoEm: new Date().toISOString().split("T")[0] } as Cliente] }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "criar_cliente", entidade: "Cliente", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo cliente" })
+
+    try {
+      if (editingId) {
+        // Atualiza no Supabase
+        const { data, error } = await supabase
+          .from("clientes")
+          .update({
+            nome: form.nome,
+            cpf: form.cpf,
+            email: form.email || null,
+            telefone: form.telefone || null,
+          })
+          .eq("id", editingId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar cliente no Supabase:", error)
+          alert("Não foi possível salvar o cliente. Verifique os dados (CPF único) e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: Cliente = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          nome: row.nome as string,
+          cpf: row.cpf as string,
+          email: (row.email as string) ?? "",
+          telefone: (row.telefone as string) ?? "",
+          criadoEm: (row.criado_em as string)?.slice(0, 10) ?? "",
+        }
+
+        updateStore((s) => ({
+          ...s,
+          clientes: s.clientes.map((c) => (c.id === editingId ? atualizado : c)),
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_cliente",
+          entidade: "Cliente",
+          entidadeId: editingId,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Edicao",
+        })
+      } else {
+        // Cria no Supabase
+        const { data, error } = await supabase
+          .from("clientes")
+          .insert({
+            empresa_id: empresaId,
+            nome: form.nome,
+            cpf: form.cpf,
+            email: form.email || null,
+            telefone: form.telefone || null,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar cliente no Supabase:", error)
+          alert("Não foi possível criar o cliente. Verifique os dados (CPF único) e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const novo: Cliente = {
+          id: (row.id as string) ?? generateId(),
+          empresaId: row.empresa_id as string,
+          nome: row.nome as string,
+          cpf: row.cpf as string,
+          email: (row.email as string) ?? "",
+          telefone: (row.telefone as string) ?? "",
+          criadoEm: (row.criado_em as string)?.slice(0, 10) ?? new Date().toISOString().split("T")[0],
+        }
+
+        updateStore((s) => ({
+          ...s,
+          clientes: [...s.clientes, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_cliente",
+          entidade: "Cliente",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Novo cliente",
+        })
+      }
+
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro inesperado ao salvar cliente:", e)
+      alert("Ocorreu um erro ao salvar o cliente. Tente novamente mais tarde.")
     }
-    setDialogOpen(false)
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Clientes</h2>
-          <p className="text-sm text-muted-foreground">Cadastro de clientes da empresa</p>
+          <h2 className="page-title">Clientes</h2>
+          <p className="page-description">Cadastro de clientes da empresa</p>
         </div>
-        <Button onClick={() => { setEditingId(null); setForm({ nome: "", cpf: "", email: "", telefone: "" }); setDialogOpen(true) }}
-          className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
+        <Button onClick={() => { setEditingId(null); setForm({ nome: "", cpf: "", email: "", telefone: "" }); setDialogOpen(true) }}>
           <Plus className="h-4 w-4 mr-2" /> Novo Cliente
         </Button>
       </div>
@@ -96,16 +195,16 @@ export function CadastrosClientes() {
             <DialogDescription>Dados do cliente</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
-            <div className="grid gap-2"><Label>Nome *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
-            <div className="grid gap-2"><Label>CPF</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} /></div>
+            <div className="grid gap-2"><Label className="label-padrao">Nome *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
+            <div className="grid gap-2"><Label className="label-padrao">CPF</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-              <div className="grid gap-2"><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
+              <div className="grid gap-2"><Label className="label-padrao">Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+              <div className="grid gap-2"><Label className="label-padrao">Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

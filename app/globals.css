@@ -8,7 +8,32 @@
   }
 }
 
+/* Perfil padrão: títulos e descrições de página (igual à tela de login) */
+@layer components {
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight text-foreground;
+  }
+  .page-description {
+    @apply text-sm text-muted-foreground mt-1;
+  }
+  .card-padrao {
+    @apply rounded-2xl border border-border/60 shadow-sm bg-card text-card-foreground;
+  }
+  .label-padrao {
+    @apply text-xs font-medium text-muted-foreground uppercase tracking-wider;
+  }
+  /* Oculta barra de rolagem mantendo scroll (menu lateral) */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 @layer base {
+  /* Perfil padrão do sistema: cores e estilo da tela de login (sky) */
   :root {
     --background: 0 0% 100%;
     --foreground: 207 24% 16%;
@@ -16,32 +41,32 @@
     --card-foreground: 207 24% 16%;
     --popover: 0 0% 100%;
     --popover-foreground: 207 24% 16%;
-    --primary: 207 24% 16%;
+    --primary: 199 89% 48%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
+    --secondary: 199 30% 96%;
     --secondary-foreground: 207 24% 16%;
-    --muted: 220 14% 96%;
+    --muted: 199 20% 96%;
     --muted-foreground: 218 9% 65%;
-    --accent: 220 14% 96%;
+    --accent: 199 30% 94%;
     --accent-foreground: 207 24% 16%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 207 24% 16%;
-    --chart-1: 207 24% 16%;
-    --chart-2: 218 9% 65%;
+    --border: 199 20% 90%;
+    --input: 199 20% 90%;
+    --ring: 199 89% 48%;
+    --chart-1: 199 89% 48%;
+    --chart-2: 199 60% 60%;
     --chart-3: 38 92% 50%;
     --chart-4: 160 60% 45%;
     --chart-5: 0 72% 51%;
-    --radius: 0.625rem;
-    --sidebar-background: 207 24% 16%;
-    --sidebar-foreground: 220 20% 92%;
+    --radius: 0.75rem;
+    --sidebar-background: 199 89% 42%;
+    --sidebar-foreground: 0 0% 100%;
     --sidebar-primary: 0 0% 100%;
-    --sidebar-primary-foreground: 207 24% 16%;
-    --sidebar-accent: 207 20% 22%;
-    --sidebar-accent-foreground: 220 20% 95%;
-    --sidebar-border: 207 18% 26%;
+    --sidebar-primary-foreground: 199 89% 42%;
+    --sidebar-accent: 199 70% 35%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 199 60% 38%;
     --sidebar-ring: 0 0% 100%;
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;

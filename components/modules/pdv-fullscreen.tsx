@@ -86,6 +86,7 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   )
 
   // Permissoes
+  const podeFinalizar = temPermissao(usuarioId, "PDV_VENDER")
   const podeDescontar = temPermissao(usuarioId, "PDV_DESCONTO")
   const podeCancelar = temPermissao(usuarioId, "PDV_CANCELAR")
 
@@ -245,8 +246,7 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   function finalizarVenda() {
     if (!empresaId || !lojaId) return
     if (itensVenda.length === 0) return
-
-    // Se caixa fechado, bloqueia
+    if (!temPermissao(usuarioId, "PDV_VENDER")) return
     if (!caixaAberto) return
 
     const venda: Venda = {
@@ -432,57 +432,59 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[hsl(207,24%,12%)] text-[hsl(220,20%,92%)]">
       {/* ==================== TOP BAR ==================== */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] px-4">
-        <div className="flex items-center gap-3">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[hsl(var(--primary))]/30 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] px-4 py-2.5 min-h-[3.25rem]">
+        {/* Esquerda: marca + modo */}
+        <div className="flex min-w-0 flex-shrink-0 items-center gap-3">
           {branding.logoIcone ? (
-            <img src={branding.logoIcone} alt="" className="h-7 w-7 rounded object-contain" />
+            <img src={branding.logoIcone} alt="" className="h-8 w-8 rounded object-contain flex-shrink-0" />
           ) : branding.logoPrincipal ? (
-            <img src={branding.logoPrincipal} alt="" className="h-7 w-auto max-w-[100px] object-contain" />
+            <img src={branding.logoPrincipal} alt="" className="h-7 w-auto max-w-[110px] object-contain flex-shrink-0" />
           ) : (
-            <Store className="h-5 w-5 text-current opacity-80" />
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-[hsl(var(--primary-foreground))]/10">
+              <Store className="h-4 w-4 text-current opacity-90" />
+            </div>
           )}
-          <span className="text-sm font-semibold tracking-tight">
-            {branding.nomeExibicao}
-          </span>
-          <Badge className="ml-2 bg-[hsl(152,60%,42%)]/20 text-[hsl(152,60%,60%)] border-[hsl(152,60%,42%)]/30 text-[10px]">
-            MODO PDV
-          </Badge>
+          <div className="flex min-w-0 flex-shrink items-center gap-2">
+            <span className="truncate text-sm font-semibold tracking-tight">
+              {branding.nomeExibicao}
+            </span>
+            <Badge className="flex-shrink-0 bg-[hsl(var(--primary-foreground))]/15 text-[hsl(var(--primary-foreground))] border-[hsl(var(--primary-foreground))]/25 text-[10px] font-medium">
+              PDV
+            </Badge>
+          </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          {/* Status do caixa */}
+        {/* Centro: status do caixa (oculta em telas muito pequenas) */}
+        <div className="hidden sm:flex flex-1 justify-center min-w-0">
           {caixaAberto ? (
-            <div className="flex items-center gap-2 text-xs">
-              <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(152,60%,50%)]" />
-              <span className="text-[hsl(218,9%,65%)]">
-                Caixa aberto | {caixaAberto.operador} | Abertura: R$ {caixaAberto.valorAbertura.toFixed(2)}
+            <div className="flex items-center gap-2 text-xs text-[hsl(var(--primary-foreground))]/90">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+              <span className="truncate">
+                Caixa aberto · {caixaAberto.operador} · R$ {caixaAberto.valorAbertura.toFixed(2)}
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-xs">
-              <Lock className="h-3.5 w-3.5 text-[hsl(38,92%,50%)]" />
-              <span className="text-[hsl(38,92%,50%)]">Caixa fechado</span>
+            <div className="flex items-center gap-2 text-xs text-amber-300">
+              <Lock className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>Caixa fechado</span>
             </div>
           )}
+        </div>
 
-          <Separator orientation="vertical" className="h-5 bg-[hsl(207,18%,26%)]" />
-
-          {/* Operador */}
-          <div className="flex items-center gap-2 text-xs text-[hsl(218,9%,65%)]">
-            <User className="h-3.5 w-3.5" />
-            <span>{sessao.nome}</span>
+        {/* Direita: operador + sair */}
+        <div className="flex flex-shrink-0 items-center gap-3">
+          <div className="flex items-center gap-2 text-xs text-[hsl(var(--primary-foreground))]/85">
+            <User className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="truncate max-w-[120px]">{sessao.nome}</span>
           </div>
-
-          <Separator orientation="vertical" className="h-5 bg-[hsl(207,18%,26%)]" />
-
-          {/* Sair do PDV */}
+          <Separator orientation="vertical" className="hidden sm:block h-6 bg-[hsl(var(--primary-foreground))]/20" />
           <Button
             variant="ghost"
             size="sm"
             onClick={handleExitRequest}
-            className="gap-2 text-xs text-[hsl(218,9%,65%)] hover:text-[hsl(220,20%,92%)] hover:bg-[hsl(207,20%,22%)] bg-transparent"
+            className="gap-2 h-8 px-3 text-xs font-medium text-[hsl(var(--primary-foreground))]/90 hover:text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary-foreground))]/10 border border-[hsl(var(--primary-foreground))]/20"
           >
-            <LogOut className="h-3.5 w-3.5" />
+            <ArrowLeft className="h-3.5 w-3.5" />
             Sair do PDV
           </Button>
         </div>
@@ -774,6 +776,11 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                 <Lock className="h-3.5 w-3.5 shrink-0" />
                 <span>Caixa fechado. Abra o caixa para finalizar vendas.</span>
               </div>
+            ) : !podeFinalizar ? (
+              <div className="flex items-center gap-2 rounded-lg bg-[hsl(218,9%,30%)] border border-[hsl(207,18%,26%)] px-3 py-2.5 text-xs text-[hsl(218,9%,55%)]">
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span>Sem permissão para finalizar vendas.</span>
+              </div>
             ) : (
               <Button
                 onClick={() => {
@@ -858,7 +865,8 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                   </Button>
                   <Button
                     onClick={finalizarVenda}
-                    className="flex-1 bg-[hsl(152,60%,42%)] text-[hsl(0,0%,100%)] hover:bg-[hsl(152,60%,38%)]"
+                    disabled={!podeFinalizar}
+                    className="flex-1 bg-[hsl(152,60%,42%)] text-[hsl(0,0%,100%)] hover:bg-[hsl(152,60%,38%)] disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-4 w-4 mr-1" />
                     Confirmar

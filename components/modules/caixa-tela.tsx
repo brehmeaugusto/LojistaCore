@@ -5,10 +5,10 @@ import { useAppStore } from "@/hooks/use-store"
 import {
   updateStore,
   addAuditLog,
-  generateId,
   temPermissao,
   type SessaoCaixa,
 } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,9 +36,17 @@ export function CaixaTela() {
   const empresaId = sessao.empresaId!
   const usuarioId = sessao.usuarioEmpresaId!
 
-  const lojaAtual = store.lojas.find(
-    (l) => l.empresaId === empresaId && l.status === "ativo"
-  )
+  const usuario = store.usuariosEmpresa.find((u) => u.id === usuarioId)
+  const lojaDoUsuario = usuario?.lojaId ?? null
+  const isFuncionario = usuario?.papel === "funcionario"
+
+  const lojaAtual = isFuncionario && lojaDoUsuario
+    ? store.lojas.find(
+        (l) => l.id === lojaDoUsuario && l.empresaId === empresaId && l.status === "ativo"
+      )
+    : store.lojas.find(
+        (l) => l.empresaId === empresaId && l.status === "ativo"
+      )
   const lojaId = lojaAtual?.id
 
   const sessaoAtual = lojaId
@@ -74,8 +82,12 @@ export function CaixaTela() {
   )
   const totalVendas = vendasSessao.reduce((s, v) => s + v.total, 0)
 
-  function abrirCaixa() {
-    if (!lojaId) return
+  async function abrirCaixa() {
+    if (!lojaId) {
+      alert("Nenhuma loja ativa encontrada para esta empresa. Cadastre uma loja para abrir o caixa.")
+      return
+    }
+
     if (!temPermissao(usuarioId, "CAIXA_ABRIR")) {
       addAuditLog({
         usuario: sessao.nome,
@@ -86,44 +98,73 @@ export function CaixaTela() {
         depois: "Tentativa de abrir caixa sem permissao",
         motivo: "CAIXA_ABRIR nao concedida",
       })
+      alert("Você não tem permissão para abrir o caixa.")
       return
     }
 
-    const id = generateId()
-    updateStore((s) => ({
-      ...s,
-      sessoesCaixa: [
-        ...s.sessoesCaixa,
-        {
-          id,
-          empresaId,
-          lojaId,
+    const valor = Number(valorAbertura) || 0
+
+    try {
+      const { data, error } = await supabase
+        .from("sessoes_caixa")
+        .insert({
+          empresa_id: empresaId,
+          loja_id: lojaId,
           operador: sessao.nome,
-          status: "aberto" as const,
-          abertura: new Date().toISOString(),
-          fechamento: "",
-          valorAbertura: Number(valorAbertura) || 0,
-          valorFechamento: 0,
+          status: "aberto",
+          valor_abertura: valor,
+          valor_fechamento: 0,
           sangrias: 0,
           suprimentos: 0,
           divergencia: 0,
-        },
-      ],
-    }))
+        })
+        .select("*")
+        .maybeSingle()
 
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "abrir_caixa",
-      entidade: "SessaoCaixa",
-      entidadeId: id,
-      antes: "",
-      depois: JSON.stringify({ valorAbertura }),
-      motivo: "Abertura de caixa",
-    })
-    setShowAbertura(false)
+      if (error) {
+        console.error("Erro ao abrir caixa:", error)
+        alert("Não foi possível abrir o caixa. Verifique a conexão com o banco e tente novamente.")
+        return
+      }
+
+      const row = data as any
+      const novaSessao: SessaoCaixa = {
+        id: row.id as string,
+        empresaId: row.empresa_id as string,
+        lojaId: row.loja_id as string,
+        operador: row.operador as string,
+        status: row.status as SessaoCaixa["status"],
+        abertura: row.abertura as string,
+        fechamento: (row.fechamento as string) ?? "",
+        valorAbertura: Number(row.valor_abertura) ?? valor,
+        valorFechamento: Number(row.valor_fechamento) ?? 0,
+        sangrias: Number(row.sangrias) ?? 0,
+        suprimentos: Number(row.suprimentos) ?? 0,
+        divergencia: Number(row.divergencia) ?? 0,
+      }
+
+      updateStore((s) => ({
+        ...s,
+        sessoesCaixa: [...s.sessoesCaixa, novaSessao],
+      }))
+
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "abrir_caixa",
+        entidade: "SessaoCaixa",
+        entidadeId: novaSessao.id,
+        antes: "",
+        depois: JSON.stringify({ valorAbertura: valor }),
+        motivo: "Abertura de caixa",
+      })
+      setShowAbertura(false)
+    } catch (e) {
+      console.error("Erro inesperado ao abrir caixa:", e)
+      alert("Ocorreu um erro ao abrir o caixa. Tente novamente.")
+    }
   }
 
-  function fecharCaixa() {
+  async function fecharCaixa() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_FECHAR")) {
       addAuditLog({
@@ -135,41 +176,64 @@ export function CaixaTela() {
         depois: "Tentativa de fechar caixa sem permissao",
         motivo: "CAIXA_FECHAR nao concedida",
       })
+      alert("Você não tem permissão para fechar o caixa.")
       return
     }
     const vlFechamento = Number(valorFechamento) || 0
     const esperado = sessaoAtual.valorAbertura + totalVendasDinheiro - sessaoAtual.sangrias + sessaoAtual.suprimentos
     const divergencia = vlFechamento - esperado
 
-    updateStore((s) => ({
-      ...s,
-      sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id
-          ? {
-              ...c,
-              status: "fechado" as const,
-              fechamento: new Date().toISOString(),
-              valorFechamento: vlFechamento,
-              divergencia,
-            }
-          : c
-      ),
-    }))
+    try {
+      const { error } = await supabase
+        .from("sessoes_caixa")
+        .update({
+          status: "fechado",
+          fechamento: new Date().toISOString(),
+          valor_fechamento: vlFechamento,
+          divergencia,
+        })
+        .eq("id", sessaoAtual.id)
+        .eq("empresa_id", empresaId)
 
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "fechar_caixa",
-      entidade: "SessaoCaixa",
-      entidadeId: sessaoAtual.id,
-      antes: JSON.stringify({ status: "aberto" }),
-      depois: JSON.stringify({ valorFechamento: vlFechamento, divergencia }),
-      motivo: "Fechamento de caixa",
-    })
-    setShowFechamento(false)
-    setValorFechamento("")
+      if (error) {
+        console.error("Erro ao fechar caixa:", error)
+        alert("Não foi possível fechar o caixa. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
+        ...s,
+        sessoesCaixa: s.sessoesCaixa.map((c) =>
+          c.id === sessaoAtual.id
+            ? {
+                ...c,
+                status: "fechado" as const,
+                fechamento: new Date().toISOString(),
+                valorFechamento: vlFechamento,
+                divergencia,
+              }
+            : c
+        ),
+      }))
+
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "fechar_caixa",
+        entidade: "SessaoCaixa",
+        entidadeId: sessaoAtual.id,
+        antes: JSON.stringify({ status: "aberto" }),
+        depois: JSON.stringify({ valorFechamento: vlFechamento, divergencia }),
+        motivo: "Fechamento de caixa",
+      })
+      setShowFechamento(false)
+      setValorFechamento("")
+    } catch (e) {
+      console.error("Erro inesperado ao fechar caixa:", e)
+      alert("Ocorreu um erro ao fechar o caixa. Tente novamente.")
+    }
   }
 
-  function registrarSangria() {
+  async function registrarSangria() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_SANGRIA")) {
       addAuditLog({
@@ -181,32 +245,51 @@ export function CaixaTela() {
         depois: "Tentativa de sangria sem permissao",
         motivo: "CAIXA_SANGRIA nao concedida",
       })
+      alert("Você não tem permissão para registrar sangria.")
       return
     }
     const valor = Number(sangriaValor) || 0
     if (valor <= 0) return
 
-    updateStore((s) => ({
-      ...s,
-      sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id
-          ? { ...c, sangrias: c.sangrias + valor }
-          : c
-      ),
-    }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "sangria",
-      entidade: "SessaoCaixa",
-      entidadeId: sessaoAtual.id,
-      antes: "",
-      depois: JSON.stringify({ valor }),
-      motivo: "Sangria de caixa",
-    })
-    setSangriaValor("")
+    try {
+      const novoTotal = sessaoAtual.sangrias + valor
+      const { error } = await supabase
+        .from("sessoes_caixa")
+        .update({ sangrias: novoTotal })
+        .eq("id", sessaoAtual.id)
+        .eq("empresa_id", empresaId)
+
+      if (error) {
+        console.error("Erro ao registrar sangria:", error)
+        alert("Não foi possível registrar a sangria. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
+        ...s,
+        sessoesCaixa: s.sessoesCaixa.map((c) =>
+          c.id === sessaoAtual.id
+            ? { ...c, sangrias: novoTotal }
+            : c
+        ),
+      }))
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "sangria",
+        entidade: "SessaoCaixa",
+        entidadeId: sessaoAtual.id,
+        antes: "",
+        depois: JSON.stringify({ valor }),
+        motivo: "Sangria de caixa",
+      })
+      setSangriaValor("")
+    } catch (e) {
+      console.error("Erro inesperado ao registrar sangria:", e)
+      alert("Ocorreu um erro ao registrar a sangria. Tente novamente.")
+    }
   }
 
-  function registrarSuprimento() {
+  async function registrarSuprimento() {
     if (!sessaoAtual) return
     if (!temPermissao(usuarioId, "CAIXA_SUPRIMENTO")) {
       addAuditLog({
@@ -218,41 +301,63 @@ export function CaixaTela() {
         depois: "Tentativa de suprimento sem permissao",
         motivo: "CAIXA_SUPRIMENTO nao concedida",
       })
+      alert("Você não tem permissão para registrar suprimento.")
       return
     }
     const valor = Number(suprimentoValor) || 0
     if (valor <= 0) return
 
-    updateStore((s) => ({
-      ...s,
-      sessoesCaixa: s.sessoesCaixa.map((c) =>
-        c.id === sessaoAtual.id
-          ? { ...c, suprimentos: c.suprimentos + valor }
-          : c
-      ),
-    }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "suprimento",
-      entidade: "SessaoCaixa",
-      entidadeId: sessaoAtual.id,
-      antes: "",
-      depois: JSON.stringify({ valor }),
-      motivo: "Suprimento de caixa",
-    })
-    setSuprimentoValor("")
+    try {
+      const novoTotal = sessaoAtual.suprimentos + valor
+      const { error } = await supabase
+        .from("sessoes_caixa")
+        .update({ suprimentos: novoTotal })
+        .eq("id", sessaoAtual.id)
+        .eq("empresa_id", empresaId)
+
+      if (error) {
+        console.error("Erro ao registrar suprimento:", error)
+        alert("Não foi possível registrar o suprimento. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
+        ...s,
+        sessoesCaixa: s.sessoesCaixa.map((c) =>
+          c.id === sessaoAtual.id
+            ? { ...c, suprimentos: novoTotal }
+            : c
+        ),
+      }))
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "suprimento",
+        entidade: "SessaoCaixa",
+        entidadeId: sessaoAtual.id,
+        antes: "",
+        depois: JSON.stringify({ valor }),
+        motivo: "Suprimento de caixa",
+      })
+      setSuprimentoValor("")
+    } catch (e) {
+      console.error("Erro inesperado ao registrar suprimento:", e)
+      alert("Ocorreu um erro ao registrar o suprimento. Tente novamente.")
+    }
   }
 
   const historicoFechados = store.sessoesCaixa.filter(
-    (c) => c.empresaId === empresaId && c.status === "fechado"
+    (c) =>
+      c.empresaId === empresaId &&
+      c.status === "fechado" &&
+      (!isFuncionario || !lojaDoUsuario || c.lojaId === lojaDoUsuario)
   )
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Caixa</h2>
-          <p className="text-sm text-muted-foreground">Gerenciamento de sessoes de caixa</p>
+          <h2 className="page-title">Caixa</h2>
+          <p className="page-description">Gerenciamento de sessões de caixa</p>
         </div>
         {!sessaoAtual ? (
           <Dialog open={showAbertura} onOpenChange={setShowAbertura}>
@@ -376,7 +481,7 @@ export function CaixaTela() {
           {/* Sales breakdown */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base text-card-foreground">Resumo por Forma de Pagamento</CardTitle>
+              <CardTitle className="text-lg text-foreground">Resumo por Forma de Pagamento</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 md:grid-cols-4">
@@ -392,7 +497,7 @@ export function CaixaTela() {
                   <p className="text-xs text-muted-foreground">PIX</p>
                   <p className="text-lg font-bold font-mono text-foreground">R$ {totalVendasPix.toFixed(2)}</p>
                 </div>
-                <div className="p-3 rounded-lg bg-[hsl(var(--primary))]/10">
+                <div className="p-3 rounded-lg bg-primary/10">
                   <p className="text-xs text-muted-foreground">Total</p>
                   <p className="text-lg font-bold font-mono text-[hsl(var(--primary))]">R$ {totalVendas.toFixed(2)}</p>
                 </div>
@@ -458,7 +563,7 @@ export function CaixaTela() {
       {/* Historico */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base text-card-foreground">Historico de Sessoes</CardTitle>
+          <CardTitle className="text-lg text-foreground">Historico de Sessoes</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>

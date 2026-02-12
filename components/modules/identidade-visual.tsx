@@ -7,6 +7,7 @@ import {
   isWhiteLabelHabilitado, isWhiteLabelCoresHabilitado,
   BRANDING_DEFAULTS, type BrandingEmpresa, type SessaoUsuario,
 } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -21,6 +22,8 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
   const fileInputLogo = useRef<HTMLInputElement>(null)
   const fileInputIcone = useRef<HTMLInputElement>(null)
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const wlHabilitado = empresaId ? isWhiteLabelHabilitado(empresaId) : false
   const wlCores = empresaId ? isWhiteLabelCoresHabilitado(empresaId) : false
@@ -70,7 +73,7 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     reader.readAsDataURL(file)
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!empresaId || !wlHabilitado) return
     const trimmedNome = sanitizeNome(nomeExibicao).trim()
     if (!trimmedNome) return
@@ -84,47 +87,100 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
       corDestaque: brandingAtual.corDestaque,
     }) : "nenhum"
 
-    const novoBranding: BrandingEmpresa = {
-      id: brandingAtual?.id ?? generateId(),
-      empresaId,
-      nomeExibicao: trimmedNome,
-      logoPrincipal,
-      logoIcone,
-      corPrimaria: wlCores ? corPrimaria : null,
-      corSecundaria: wlCores ? corSecundaria : null,
-      corDestaque: wlCores ? corDestaque : null,
-      atualizadoPor: sessao.nome,
-      atualizadoEm: new Date().toISOString(),
-    }
+    setSaving(true)
+    setSaveError(null)
 
-    updateStore((s) => ({
-      ...s,
-      branding: brandingAtual
-        ? s.branding.map((b) => b.id === brandingAtual.id ? novoBranding : b)
-        : [...s.branding, novoBranding],
-    }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: brandingAtual ? "editar_branding" : "criar_branding",
-      entidade: "BrandingEmpresa",
-      entidadeId: novoBranding.id,
-      antes,
-      depois: JSON.stringify({
+    try {
+      let brandingId = brandingAtual?.id
+
+      if (brandingAtual) {
+        const { error } = await supabase
+          .from("branding_empresas")
+          .update({
+            nome_exibicao: trimmedNome,
+            logo_principal: logoPrincipal,
+            logo_icone: logoIcone,
+            cor_primaria: wlCores ? corPrimaria : null,
+            cor_secundaria: wlCores ? corSecundaria : null,
+            cor_destaque: wlCores ? corDestaque : null,
+            atualizado_por: sessao.nome,
+          })
+          .eq("id", brandingAtual.id)
+
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from("branding_empresas")
+          .insert({
+            empresa_id: empresaId,
+            nome_exibicao: trimmedNome,
+            logo_principal: logoPrincipal,
+            logo_icone: logoIcone,
+            cor_primaria: wlCores ? corPrimaria : null,
+            cor_secundaria: wlCores ? corSecundaria : null,
+            cor_destaque: wlCores ? corDestaque : null,
+            atualizado_por: sessao.nome,
+          })
+          .select("id")
+          .single()
+
+        if (error) throw error
+        brandingId = (data as { id: string }).id
+      }
+
+      const novoBranding: BrandingEmpresa = {
+        id: brandingId ?? generateId(),
+        empresaId,
         nomeExibicao: trimmedNome,
-        logoPrincipal: logoPrincipal ? "arquivo" : "vazio",
-        logoIcone: logoIcone ? "arquivo" : "vazio",
+        logoPrincipal,
+        logoIcone,
         corPrimaria: wlCores ? corPrimaria : null,
         corSecundaria: wlCores ? corSecundaria : null,
         corDestaque: wlCores ? corDestaque : null,
-      }),
-      motivo: "Alteracao de identidade visual",
-    })
+        atualizadoPor: sessao.nome,
+        atualizadoEm: new Date().toISOString(),
+      }
 
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+      updateStore((s) => ({
+        ...s,
+        branding: brandingAtual
+          ? s.branding.map((b) => b.id === brandingAtual.id ? novoBranding : b)
+          : [...s.branding, novoBranding],
+      }))
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: brandingAtual ? "editar_branding" : "criar_branding",
+        entidade: "BrandingEmpresa",
+        entidadeId: novoBranding.id,
+        antes,
+        depois: JSON.stringify({
+          nomeExibicao: trimmedNome,
+          logoPrincipal: logoPrincipal ? "arquivo" : "vazio",
+          logoIcone: logoIcone ? "arquivo" : "vazio",
+          corPrimaria: wlCores ? corPrimaria : null,
+          corSecundaria: wlCores ? corSecundaria : null,
+          corDestaque: wlCores ? corDestaque : null,
+        }),
+        motivo: "Alteracao de identidade visual",
+      })
+
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      console.error("Erro ao salvar branding:", e)
+      const msg =
+        e && typeof e === "object" && "message" in e
+          ? String((e as { message: string }).message)
+          : e instanceof Error
+            ? e.message
+            : "Erro ao salvar identidade visual. Verifique se a tabela branding_empresas existe no Supabase e se RLS permite insert/update."
+      setSaveError(msg)
+    } finally {
+      setSaving(false)
+    }
   }
 
-  function handleRestaurar() {
+  async function handleRestaurar() {
     setNomeExibicao(empresa?.nomeFantasia ?? "")
     setLogoPrincipal(null)
     setLogoIcone(null)
@@ -133,6 +189,16 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     setCorDestaque(BRANDING_DEFAULTS.corDestaque)
 
     if (brandingAtual && empresaId) {
+      try {
+        const { error } = await supabase
+          .from("branding_empresas")
+          .delete()
+          .eq("empresa_id", empresaId)
+        if (error) throw error
+      } catch (e) {
+        console.error("Erro ao restaurar branding:", e)
+      }
+
       updateStore((s) => ({
         ...s,
         branding: s.branding.filter((b) => b.id !== brandingAtual.id),
@@ -155,8 +221,8 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     return (
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Identidade Visual</h2>
-          <p className="text-sm text-muted-foreground mt-1">Configuracoes de marca da empresa</p>
+          <h2 className="page-title">Identidade Visual</h2>
+          <p className="page-description">Configurações de marca da empresa</p>
         </div>
         <Card>
           <CardContent className="flex flex-col items-center gap-4 py-12">
@@ -180,8 +246,8 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Identidade Visual</h2>
-          <p className="text-sm text-muted-foreground mt-1">Configure a marca da sua empresa no sistema</p>
+          <h2 className="page-title">Identidade Visual</h2>
+          <p className="page-description">Configure a marca da sua empresa no sistema</p>
         </div>
         <div className="flex items-center gap-2 mt-3 sm:mt-0">
           <Badge variant="secondary" className="text-[10px]">
@@ -398,13 +464,24 @@ export function IdentidadeVisual({ sessao }: { sessao: SessaoUsuario }) {
           </Card>
 
           {/* Actions */}
-          <div className="flex items-center gap-3">
-            <Button onClick={handleSave} disabled={!nomeExibicao.trim()}>
-              {saved ? <><Check className="h-4 w-4 mr-1.5" /> Salvo</> : "Salvar Alteracoes"}
-            </Button>
-            <Button variant="outline" onClick={handleRestaurar}>
-              <RotateCcw className="h-4 w-4 mr-1.5" /> Restaurar Padrao
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <Button onClick={handleSave} disabled={!nomeExibicao.trim() || saving}>
+                {saving
+                  ? "Salvando..."
+                  : saved
+                    ? <><Check className="h-4 w-4 mr-1.5" /> Salvo</>
+                    : "Salvar Alteracoes"}
+              </Button>
+              <Button variant="outline" onClick={handleRestaurar} disabled={saving}>
+                <RotateCcw className="h-4 w-4 mr-1.5" /> Restaurar Padrao
+              </Button>
+            </div>
+            {saveError && (
+              <p className="text-xs text-destructive">
+                {saveError}
+              </p>
+            )}
           </div>
         </div>
 

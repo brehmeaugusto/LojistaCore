@@ -46,6 +46,7 @@ async function fetchPlanos(): Promise<Plano[]> {
     id: r.id as string,
     nome: (r.nome as string) ?? "",
     descricao: (r.descricao as string) ?? "",
+    valorMensal: Number(r.valor_mensal) ?? 0,
     modulosHabilitados: (r.modulos_habilitados as string[]) ?? [],
     limites: {
       maxUsuarios: (r.limite_max_usuarios as number) ?? 0,

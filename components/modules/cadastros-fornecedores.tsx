@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, generateId, type Fornecedor } from "@/lib/store"
+import { updateStore, addAuditLog, type Fornecedor } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,38 +14,134 @@ import { Plus, Pencil } from "lucide-react"
 
 export function CadastrosFornecedores() {
   const store = useAppStore()
+  const sessao = store.sessao
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ nome: "", cnpj: "", contato: "", email: "" })
   const [search, setSearch] = useState("")
 
-  const fornecedores = store.fornecedores.filter((f) => f.empresaId === "emp1")
+  // Se nao estiver logado em empresa, nao renderiza
+  if (!sessao || sessao.tipo !== "usuario_empresa" || !sessao.empresaId) {
+    return null
+  }
+
+  const empresaId = sessao.empresaId
+
+  const fornecedores = store.fornecedores.filter((f) => f.empresaId === empresaId)
   const filtered = fornecedores.filter(
     (f) => f.nome.toLowerCase().includes(search.toLowerCase()) || f.cnpj.includes(search)
   )
 
-  function save() {
+  async function save() {
     if (!form.nome) return
-    if (editingId) {
-      updateStore((s) => ({ ...s, fornecedores: s.fornecedores.map((f) => f.id === editingId ? { ...f, ...form } : f) }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "editar_fornecedor", entidade: "Fornecedor", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, fornecedores: [...s.fornecedores, { ...form, id, empresaId: "emp1" } as Fornecedor] }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "criar_fornecedor", entidade: "Fornecedor", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo fornecedor" })
+
+    try {
+      if (editingId) {
+        // Update no Supabase
+        const { data, error } = await supabase
+          .from("fornecedores")
+          .update({
+            nome: form.nome,
+            cnpj: form.cnpj,
+            contato: form.contato || null,
+            email: form.email || null,
+          })
+          .eq("id", editingId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar fornecedor no Supabase:", error)
+          alert("Não foi possível salvar o fornecedor. Verifique os dados (CNPJ único) e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: Fornecedor = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          nome: row.nome as string,
+          cnpj: row.cnpj as string,
+          contato: (row.contato as string) ?? "",
+          email: (row.email as string) ?? "",
+        }
+
+        updateStore((s) => ({
+          ...s,
+          fornecedores: s.fornecedores.map((f) => (f.id === editingId ? atualizado : f)),
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_fornecedor",
+          entidade: "Fornecedor",
+          entidadeId: editingId,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Edicao",
+        })
+      } else {
+        // Insert no Supabase
+        const { data, error } = await supabase
+          .from("fornecedores")
+          .insert({
+            empresa_id: empresaId,
+            nome: form.nome,
+            cnpj: form.cnpj,
+            contato: form.contato || null,
+            email: form.email || null,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar fornecedor no Supabase:", error)
+          alert("Não foi possível criar o fornecedor. Verifique os dados (CNPJ único) e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const novo: Fornecedor = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          nome: row.nome as string,
+          cnpj: row.cnpj as string,
+          contato: (row.contato as string) ?? "",
+          email: (row.email as string) ?? "",
+        }
+
+        updateStore((s) => ({
+          ...s,
+          fornecedores: [...s.fornecedores, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_fornecedor",
+          entidade: "Fornecedor",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Novo fornecedor",
+        })
+      }
+
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro inesperado ao salvar fornecedor:", e)
+      alert("Ocorreu um erro ao salvar o fornecedor. Tente novamente mais tarde.")
     }
-    setDialogOpen(false)
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Fornecedores</h2>
-          <p className="text-sm text-muted-foreground">Cadastro de fornecedores</p>
+          <h2 className="page-title">Fornecedores</h2>
+          <p className="page-description">Cadastro de fornecedores</p>
         </div>
-        <Button onClick={() => { setEditingId(null); setForm({ nome: "", cnpj: "", contato: "", email: "" }); setDialogOpen(true) }}
-          className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
+        <Button onClick={() => { setEditingId(null); setForm({ nome: "", cnpj: "", contato: "", email: "" }); setDialogOpen(true) }}>
           <Plus className="h-4 w-4 mr-2" /> Novo Fornecedor
         </Button>
       </div>
@@ -103,7 +200,7 @@ export function CadastrosFornecedores() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -9,6 +9,7 @@ import {
   type ModuloId, type PermissaoId,
 } from "@/lib/store"
 import { hashSenhaParaStorage } from "@/lib/login-unificado"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,6 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Plus, Pencil, UserX, UserCheck, Shield, Lock,
   AlertTriangle, ChevronDown, ChevronRight
@@ -35,17 +37,29 @@ const papelLabel: Record<PapelEmpresa, string> = {
   funcionario: "Funcionario",
 }
 
+type UsuarioFormState = {
+  nome: string
+  login: string
+  senha: string
+  papel: PapelEmpresa
+  lojaId: string
+  /** Modulos liberados para o usuario (respeitando o plano/licenca da empresa) */
+  modulosLiberados: ModuloId[]
+}
+
 export function UsuariosAcessos() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [permDialogOpen, setPermDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [permUserId, setPermUserId] = useState<string | null>(null)
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<UsuarioFormState>({
     nome: "",
     login: "",
     senha: "",
-    papel: "funcionario" as PapelEmpresa,
+    papel: "funcionario",
+    lojaId: "",
+    modulosLiberados: [],
   })
 
   // Separate state for module/permission toggles
@@ -57,18 +71,26 @@ export function UsuariosAcessos() {
   const empresaId = sessao?.empresaId
   const modulosLicenciados = empresaId ? getModulosLicenciados(empresaId) : []
   const usuarios = empresaId ? store.usuariosEmpresa.filter((u) => u.empresaId === empresaId) : []
+  const lojasEmpresa = empresaId ? store.lojas.filter((l) => l.empresaId === empresaId) : []
 
   if (!sessao || sessao.tipo !== "usuario_empresa") return null
 
   function openCreate() {
     setEditingId(null)
-    setForm({ nome: "", login: "", senha: "", papel: "funcionario" })
+    setForm({ nome: "", login: "", senha: "", papel: "funcionario", lojaId: "", modulosLiberados: [] })
     setDialogOpen(true)
   }
 
   function openEdit(user: UsuarioEmpresa) {
     setEditingId(user.id)
-    setForm({ nome: user.nome, login: user.login, senha: "", papel: user.papel })
+    setForm({
+      nome: user.nome,
+      login: user.login,
+      senha: "",
+      papel: user.papel,
+      lojaId: user.lojaId ?? "",
+      modulosLiberados: [...user.modulosLiberados],
+    })
     setDialogOpen(true)
   }
 
@@ -81,59 +103,128 @@ export function UsuariosAcessos() {
 
   async function saveUser() {
     if (!form.nome || !form.login) return
+    if (form.papel === "funcionario" && !form.lojaId) {
+      alert("Selecione a loja em que o funcionário ficará cadastrado.")
+      return
+    }
     const executor = sessao.nome
 
     try {
       if (editingId) {
         const before = store.usuariosEmpresa.find((u) => u.id === editingId)
         const senhaHash = form.senha ? await hashSenhaParaStorage(form.senha) : undefined
+
+        const updateData: Record<string, unknown> = {
+          nome: form.nome,
+          login: form.login,
+          papel: form.papel,
+          loja_id: form.lojaId || null,
+          modulos_liberados: form.modulosLiberados,
+        }
+        if (senhaHash) {
+          updateData.senha = senhaHash
+        }
+
+        const { data, error } = await supabase
+          .from("usuarios")
+          .update(updateData)
+          .eq("id", editingId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar usuário:", error)
+          alert("Não foi possível salvar o usuário. Verifique se o login é único e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: UsuarioEmpresa = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          lojaId: (row.loja_id as string) ?? null,
+          nome: row.nome as string,
+          login: row.login as string,
+          senha: "", // nunca expor hash no store
+          papel: row.papel as PapelEmpresa,
+          status: row.status as UsuarioEmpresaStatus,
+          modulosLiberados: (row.modulos_liberados as ModuloId[]) ?? [],
+          permissoes: (row.permissoes as PermissaoId[]) ?? [],
+          criadoEm: (row.criado_em as string)?.slice(0, 10) ?? "",
+          ultimoAcesso: (row.ultimo_acesso as string | null)?.slice(0, 10) ?? "",
+        }
+
         updateStore((s) => ({
           ...s,
           usuariosEmpresa: s.usuariosEmpresa.map((u) =>
-            u.id === editingId
-              ? { ...u, nome: form.nome, login: form.login, papel: form.papel, ...(senhaHash ? { senha: senhaHash } : {}) }
-              : u
+            u.id === editingId ? atualizado : u
           ),
         }))
-      addAuditLog({
-        usuario: executor,
-        acao: "editar_usuario",
-        entidade: "UsuarioEmpresa",
-        entidadeId: editingId,
-        antes: JSON.stringify({ nome: before?.nome, login: before?.login, papel: before?.papel }),
-        depois: JSON.stringify({ nome: form.nome, login: form.login, papel: form.papel }),
-        motivo: "Edicao de dados do usuario",
-      })
-    } else {
+        addAuditLog({
+          usuario: executor,
+          acao: "editar_usuario",
+          entidade: "UsuarioEmpresa",
+          entidadeId: editingId,
+          antes: JSON.stringify({ nome: before?.nome, login: before?.login, papel: before?.papel, lojaId: before?.lojaId }),
+          depois: JSON.stringify({ nome: form.nome, login: form.login, papel: form.papel, lojaId: form.lojaId || null }),
+          motivo: "Edicao de dados do usuario",
+        })
+      } else {
         const senhaHash = await hashSenhaParaStorage(form.senha || "123456")
-        const id = generateId()
-        const novoUsuario: UsuarioEmpresa = {
-          id,
-          empresaId: empresaId!,
-          nome: form.nome,
-          login: form.login,
-          senha: senhaHash,
-          papel: form.papel,
-          status: "ativo",
-          modulosLiberados: [],
-          permissoes: [],
-          criadoEm: new Date().toISOString().slice(0, 10),
-          ultimoAcesso: "",
+
+        const { data, error } = await supabase
+          .from("usuarios")
+          .insert({
+            empresa_id: empresaId,
+            loja_id: form.lojaId || null,
+            nome: form.nome,
+            login: form.login,
+            senha: senhaHash,
+            papel: form.papel,
+            status: "ativo",
+            modulos_liberados: form.modulosLiberados,
+            permissoes: [],
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar usuário:", error)
+          alert("Não foi possível criar o usuário. Verifique se o login é único e tente novamente.")
+          return
         }
+
+        const row = data as any
+        const novoUsuario: UsuarioEmpresa = {
+          id: (row.id as string) ?? generateId(),
+          empresaId: row.empresa_id as string,
+          lojaId: (row.loja_id as string) ?? null,
+          nome: row.nome as string,
+          login: row.login as string,
+          senha: "", // hash fica apenas no banco
+          papel: row.papel as PapelEmpresa,
+          status: row.status as UsuarioEmpresaStatus,
+          modulosLiberados: (row.modulos_liberados as ModuloId[]) ?? [],
+          permissoes: (row.permissoes as PermissaoId[]) ?? [],
+          criadoEm: (row.criado_em as string)?.slice(0, 10) ?? new Date().toISOString().split("T")[0],
+          ultimoAcesso: (row.ultimo_acesso as string | null)?.slice(0, 10) ?? "",
+        }
+
         updateStore((s) => ({
           ...s,
           usuariosEmpresa: [...s.usuariosEmpresa, novoUsuario],
         }))
-      addAuditLog({
-        usuario: executor,
-        acao: "criar_usuario",
-        entidade: "UsuarioEmpresa",
-        entidadeId: id,
-        antes: "",
-        depois: JSON.stringify({ nome: form.nome, login: form.login, papel: form.papel }),
-        motivo: "Novo usuario criado",
-      })
-    }
+        addAuditLog({
+          usuario: executor,
+          acao: "criar_usuario",
+          entidade: "UsuarioEmpresa",
+          entidadeId: novoUsuario.id,
+          antes: "",
+          depois: JSON.stringify({ nome: form.nome, login: form.login, papel: form.papel, lojaId: form.lojaId || null }),
+          motivo: "Novo usuario criado",
+        })
+      }
       setDialogOpen(false)
     } catch (e) {
       console.error("Erro ao salvar usuario:", e)
@@ -180,9 +271,25 @@ export function UsuariosAcessos() {
     )
   }
 
-  function savePermissions() {
-    if (!permUserId) return
+  async function savePermissions() {
+    if (!permUserId || !empresaId) return
     const before = store.usuariosEmpresa.find((u) => u.id === permUserId)
+
+    const { error } = await supabase
+      .from("usuarios")
+      .update({
+        modulos_liberados: modulosEdit,
+        permissoes: permissoesEdit,
+      })
+      .eq("id", permUserId)
+      .eq("empresa_id", empresaId)
+
+    if (error) {
+      console.error("Erro ao salvar modulos/permissoes:", error)
+      alert("Não foi possível salvar os módulos e permissões do usuário. Tente novamente.")
+      return
+    }
+
     updateStore((s) => ({
       ...s,
       usuariosEmpresa: s.usuariosEmpresa.map((u) =>
@@ -215,10 +322,10 @@ export function UsuariosAcessos() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+          <h2 className="page-title">
             Usuarios e Acessos
           </h2>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="page-description">
             Gerencie usuarios, modulos liberados e permissoes por usuario
           </p>
         </div>
@@ -236,6 +343,7 @@ export function UsuariosAcessos() {
                 <TableHead>Nome</TableHead>
                 <TableHead>Login</TableHead>
                 <TableHead>Papel</TableHead>
+              <TableHead>Loja</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Modulos</TableHead>
                 <TableHead>Ultimo Acesso</TableHead>
@@ -252,6 +360,15 @@ export function UsuariosAcessos() {
                       {user.papel === "admin_empresa" && <Shield className="h-3 w-3 mr-1" />}
                       {papelLabel[user.papel]}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs text-muted-foreground">
+                      {user.lojaId
+                        ? (store.lojas.find((l) => l.id === user.lojaId)?.nome ?? "Loja não encontrada")
+                        : user.papel === "admin_empresa"
+                          ? "Todas as lojas"
+                          : "Não definida"}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Badge className={`text-[11px] ${statusColor[user.status]}`}>
@@ -327,45 +444,48 @@ export function UsuariosAcessos() {
 
       {/* Create/Edit User Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-foreground">
+        <DialogContent className="max-w-[min(95vw,28rem)] w-full flex flex-col gap-0 overflow-hidden p-4 sm:p-5">
+          <DialogHeader className="flex-shrink-0 pb-3">
+            <DialogTitle className="text-base text-foreground">
               {editingId ? "Editar Usuario" : "Novo Usuario"}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               {editingId ? "Altere os dados do usuario" : "Cadastre um novo usuario para esta empresa"}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label>Nome *</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2 flex-1 min-h-0">
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label className="text-sm font-medium">Nome *</Label>
               <Input
+                className="h-10 text-base"
                 value={form.nome}
                 onChange={(e) => setForm({ ...form, nome: e.target.value })}
                 placeholder="Nome completo"
               />
             </div>
-            <div className="grid gap-2">
-              <Label>Login *</Label>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Login *</Label>
               <Input
+                className="h-8 text-sm"
                 value={form.login}
                 onChange={(e) => setForm({ ...form, login: e.target.value })}
                 placeholder="Login de acesso"
               />
             </div>
-            <div className="grid gap-2">
-              <Label>{editingId ? "Nova Senha (deixe em branco para manter)" : "Senha *"}</Label>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">{editingId ? "Nova Senha" : "Senha *"}</Label>
               <Input
                 type="password"
+                className="h-8 text-sm"
                 value={form.senha}
                 onChange={(e) => setForm({ ...form, senha: e.target.value })}
-                placeholder={editingId ? "Manter atual" : "Senha de acesso"}
+                placeholder={editingId ? "Manter" : "Senha"}
               />
             </div>
-            <div className="grid gap-2">
-              <Label>Papel</Label>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Papel</Label>
               <Select value={form.papel} onValueChange={(v) => setForm({ ...form, papel: v as PapelEmpresa })}>
-                <SelectTrigger>
+                <SelectTrigger className="h-8 text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -374,10 +494,65 @@ export function UsuariosAcessos() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Loja {form.papel === "funcionario" && <span className="text-red-500">*</span>}</Label>
+              <Select
+                value={form.lojaId}
+                onValueChange={(v) => setForm({ ...form, lojaId: v })}
+              >
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Selecione a loja" />
+                </SelectTrigger>
+                <SelectContent>
+                  {form.papel !== "funcionario" && (
+                    <SelectItem value="">Todas as lojas</SelectItem>
+                  )}
+                  {lojasEmpresa.map((l) => (
+                    <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {form.papel === "funcionario" && (
+              <div className="grid gap-1.5 sm:col-span-2">
+                <Label className="text-xs text-muted-foreground">Modulos liberados (marque o que pode usar)</Label>
+                {modulosLicenciados.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">Nenhum modulo licenciado. Configure em Planos e Licencas.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 rounded-md border bg-muted/30 p-2">
+                    {MODULOS_CATALOGO.filter((m) => modulosLicenciados.includes(m.id)).map((modulo) => {
+                      const checked = form.modulosLiberados.includes(modulo.id)
+                      return (
+                        <label
+                          key={modulo.id}
+                          className="inline-flex items-center gap-1.5 rounded border bg-background px-2 py-1 cursor-pointer hover:bg-muted text-xs whitespace-nowrap"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              const isChecked = value === true
+                              setForm((prev) => {
+                                const current = prev.modulosLiberados
+                                if (isChecked) {
+                                  if (current.includes(modulo.id)) return prev
+                                  return { ...prev, modulosLiberados: [...current, modulo.id] }
+                                }
+                                return { ...prev, modulosLiberados: current.filter((m) => m !== modulo.id) }
+                              })
+                            }}
+                          />
+                          <span className="font-medium">{modulo.nome}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={saveUser}>Salvar</Button>
+          <DialogFooter className="flex-shrink-0 border-t pt-3 mt-3 gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+            <Button size="sm" onClick={saveUser}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -401,38 +576,44 @@ export function UsuariosAcessos() {
             </TabsList>
 
             <TabsContent value="modulos" className="mt-4">
-              <div className="flex flex-col gap-3">
-                {MODULOS_CATALOGO.map((modulo) => {
-                  const isLicenciado = modulosLicenciados.includes(modulo.id)
-                  const isAtivo = modulosEdit.includes(modulo.id)
+              <div className="max-h-64 overflow-y-auto rounded-md border bg-muted/40 p-2">
+                <div className="flex flex-col gap-1.5">
+                  {MODULOS_CATALOGO.map((modulo) => {
+                    const isLicenciado = modulosLicenciados.includes(modulo.id)
+                    const isAtivo = modulosEdit.includes(modulo.id)
 
-                  return (
-                    <div
-                      key={modulo.id}
-                      className={`flex items-center justify-between rounded-lg border px-4 py-3 ${
-                        !isLicenciado ? "opacity-50 bg-secondary/30" : ""
-                      }`}
-                    >
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">{modulo.nome}</span>
-                          <Badge variant="outline" className="text-[10px]">{modulo.categoria}</Badge>
-                          {!isLicenciado && (
-                            <Badge className="text-[10px] bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))] border-[hsl(var(--destructive))]/20">
-                              <Lock className="h-3 w-3 mr-1" /> Nao licenciado
+                    return (
+                      <div
+                        key={modulo.id}
+                        className={`flex items-center justify-between rounded border bg-background px-2 py-1.5 text-xs ${
+                          !isLicenciado ? "opacity-60" : ""
+                        }`}
+                      >
+                        <div className="flex flex-col leading-tight">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">{modulo.nome}</span>
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 leading-none">
+                              {modulo.categoria}
                             </Badge>
-                          )}
+                            {!isLicenciado && (
+                              <Badge className="text-[9px] px-1 py-0 bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))] border-[hsl(var(--destructive))]/30">
+                                <Lock className="h-3 w-3 mr-0.5" /> Nao licenciado
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground line-clamp-1">
+                            {modulo.descricao}
+                          </span>
                         </div>
-                        <span className="text-xs text-muted-foreground">{modulo.descricao}</span>
+                        <Switch
+                          checked={isAtivo}
+                          disabled={!isLicenciado}
+                          onCheckedChange={() => toggleModulo(modulo.id)}
+                        />
                       </div>
-                      <Switch
-                        checked={isAtivo}
-                        disabled={!isLicenciado}
-                        onCheckedChange={() => toggleModulo(modulo.id)}
-                      />
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
             </TabsContent>
 
@@ -441,9 +622,11 @@ export function UsuariosAcessos() {
                 {MODULOS_CATALOGO
                   .filter((m) => modulosEdit.includes(m.id))
                   .map((modulo) => (
-                    <Card key={modulo.id}>
-                      <CardHeader className="py-3 px-4 bg-secondary/50 border-b">
-                        <CardTitle className="text-sm font-semibold">{modulo.nome}</CardTitle>
+                  <Card key={modulo.id}>
+                      <CardHeader className="py-3 px-4 bg-primary text-primary-foreground border-b">
+                        <CardTitle className="text-sm font-semibold text-[hsl(var(--primary-foreground))]">
+                          {modulo.nome}
+                        </CardTitle>
                       </CardHeader>
                       <CardContent className="p-0 divide-y">
                         {modulo.permissoes.map((perm) => {

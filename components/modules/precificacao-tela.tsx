@@ -5,10 +5,10 @@ import { useAppStore } from "@/hooks/use-store"
 import {
   updateStore,
   addAuditLog,
-  generateId,
   temPermissao,
   type LinhaPrecificacao,
 } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,11 +43,9 @@ export function PrecificacaoTela() {
   if (!podeConsultar) {
     return (
       <div className="flex flex-col gap-4">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-          Precificacao
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Voce nao tem permissao para consultar este modulo.
+        <h2 className="page-title">Precificação</h2>
+        <p className="page-description">
+          Você não tem permissão para consultar este módulo.
         </p>
       </div>
     )
@@ -136,48 +134,152 @@ export function PrecificacaoTela() {
       modoPrecoAVista: form.modoPrecoAVista,
     }
 
-    if (editingId) {
-      const before = linhas.find((l) => l.id === editingId)
-      updateStore((s) => ({
+    try {
+      if (editingId) {
+        const before = linhas.find((l) => l.id === editingId)
+
+        const { data: row, error } = await supabase
+          .from("linhas_precificacao")
+          .update({
+            codigo: data.codigo,
+            item: data.item,
+            cor: data.cor,
+            tamanho: data.tamanho,
+            quantidade: data.quantidade,
+            valor_atacado: data.valorAtacado,
+            taxa_cartao: data.taxaCartao,
+            preco_cartao: data.precoCartao,
+            desconto_avista: data.descontoAVista,
+            modo_preco_avista: data.modoPrecoAVista,
+          })
+          .eq("id", editingId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar linha_precificacao:", error)
+          alert("Não foi possível salvar a linha de precificação. Tente novamente.")
+          return
+        }
+
+        const atualizado: LinhaPrecificacao = {
+          id: (row as any).id as string,
+          empresaId: (row as any).empresa_id as string,
+          codigo: (row as any).codigo as string,
+          item: (row as any).item as string,
+          cor: (row as any).cor as string,
+          tamanho: (row as any).tamanho as string,
+          quantidade: (row as any).quantidade as number,
+          valorAtacado:
+            (row as any).valor_atacado != null
+              ? Number((row as any).valor_atacado)
+              : null,
+          taxaCartao: Number((row as any).taxa_cartao) ?? data.taxaCartao,
+          precoCartao:
+            (row as any).preco_cartao != null
+              ? Number((row as any).preco_cartao)
+              : null,
+          descontoAVista:
+            Number((row as any).desconto_avista) ?? data.descontoAVista,
+          modoPrecoAVista:
+            ((row as any).modo_preco_avista as LinhaPrecificacao["modoPrecoAVista"]) ??
+            data.modoPrecoAVista,
+        }
+
+        updateStore((s) => ({
           ...s,
           linhasPrecificacao: s.linhasPrecificacao.map((l) =>
-            l.id === editingId ? { ...l, ...data } : l
+            l.id === editingId ? atualizado : l
           ),
         }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "editar_linha_precificacao",
-        entidade: "LinhaPrecificacao",
-        entidadeId: editingId,
-        antes: JSON.stringify(before),
-        depois: JSON.stringify(data),
-        motivo: "Edicao de precificacao",
-      })
-    } else {
-      const id = generateId()
-      const novo: LinhaPrecificacao = { ...data, id, empresaId } as LinhaPrecificacao
-      updateStore((s) => ({
-        ...s,
-        linhasPrecificacao: [...s.linhasPrecificacao, novo],
-      }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "criar_linha_precificacao",
-        entidade: "LinhaPrecificacao",
-        entidadeId: id,
-        antes: "",
-        depois: JSON.stringify(data),
-        motivo: "Nova linha de precificacao",
-      })
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_linha_precificacao",
+          entidade: "LinhaPrecificacao",
+          entidadeId: editingId,
+          antes: JSON.stringify(before),
+          depois: JSON.stringify(atualizado),
+          motivo: "Edicao de precificacao",
+        })
+      } else {
+        const { data: row, error } = await supabase
+          .from("linhas_precificacao")
+          .insert({
+            empresa_id: empresaId,
+            codigo: data.codigo,
+            item: data.item,
+            cor: data.cor,
+            tamanho: data.tamanho,
+            quantidade: data.quantidade,
+            valor_atacado: data.valorAtacado,
+            taxa_cartao: data.taxaCartao,
+            preco_cartao: data.precoCartao,
+            desconto_avista: data.descontoAVista,
+            modo_preco_avista: data.modoPrecoAVista,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar linha_precificacao:", error)
+          alert("Não foi possível criar a linha de precificação. Tente novamente.")
+          return
+        }
+
+        const novo: LinhaPrecificacao = {
+          id: (row as any).id as string,
+          empresaId: (row as any).empresa_id as string,
+          codigo: (row as any).codigo as string,
+          item: (row as any).item as string,
+          cor: (row as any).cor as string,
+          tamanho: (row as any).tamanho as string,
+          quantidade: (row as any).quantidade as number,
+          valorAtacado:
+            (row as any).valor_atacado != null
+              ? Number((row as any).valor_atacado)
+              : null,
+          taxaCartao: Number((row as any).taxa_cartao) ?? data.taxaCartao,
+          precoCartao:
+            (row as any).preco_cartao != null
+              ? Number((row as any).preco_cartao)
+              : null,
+          descontoAVista:
+            Number((row as any).desconto_avista) ?? data.descontoAVista,
+          modoPrecoAVista:
+            ((row as any).modo_preco_avista as LinhaPrecificacao["modoPrecoAVista"]) ??
+            data.modoPrecoAVista,
+        }
+
+        updateStore((s) => ({
+          ...s,
+          linhasPrecificacao: [...s.linhasPrecificacao, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_linha_precificacao",
+          entidade: "LinhaPrecificacao",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(novo),
+          motivo: "Nova linha de precificacao",
+        })
+      }
+
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro inesperado ao salvar linha_precificacao:", e)
+      alert("Ocorreu um erro ao salvar a linha de precificação. Tente novamente.")
     }
-    setDialogOpen(false)
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Precificacao</h2>
-        <p className="text-sm text-muted-foreground">Tabela de precificacao com overhead, margem e preco a vista</p>
+        <h2 className="page-title">Precificação</h2>
+        <p className="page-description">Tabela de precificação com overhead, margem e preço à vista</p>
       </div>
 
       {/* Summary */}
@@ -234,7 +336,6 @@ export function PrecificacaoTela() {
             size="sm"
             onClick={openCreate}
             disabled={!podeEditar}
-            className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
           >
             <Plus className="h-4 w-4 mr-1" /> Nova Linha
           </Button>
@@ -385,7 +486,7 @@ export function PrecificacaoTela() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

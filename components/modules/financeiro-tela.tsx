@@ -27,10 +27,10 @@ export function FinanceiroTela() {
   if (!podeConsultar) {
     return (
       <div className="flex flex-col gap-4">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h2 className="page-title">
           Financeiro - Contas a Receber
         </h2>
-        <p className="text-sm text-muted-foreground">
+        <p className="page-description">
           Voce nao tem permissao para consultar este modulo.
         </p>
       </div>
@@ -88,8 +88,8 @@ export function FinanceiroTela() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Financeiro - Contas a Receber</h2>
-        <p className="text-sm text-muted-foreground">Gestao de recebiveis e acompanhamento de pagamentos</p>
+        <h2 className="page-title">Financeiro - Contas a Receber</h2>
+        <p className="page-description">Gestão de recebíveis e acompanhamento de pagamentos</p>
       </div>
 
       {/* KPI Cards */}
@@ -158,7 +158,7 @@ export function FinanceiroTela() {
       {/* Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base text-card-foreground">Contas a Receber</CardTitle>
+          <CardTitle className="text-lg text-foreground">Contas a Receber</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>

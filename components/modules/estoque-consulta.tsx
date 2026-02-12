@@ -21,7 +21,7 @@ import { Package, ArrowRightLeft, TrendingUp, TrendingDown, AlertTriangle } from
 
 export function EstoqueConsulta() {
   const store = useAppStore()
-  const [filtroLoja, setFiltroLoja] = useState("loja1")
+  const [filtroLoja, setFiltroLoja] = useState("")
   const [filtroBusca, setFiltroBusca] = useState("")
   const [showAjuste, setShowAjuste] = useState(false)
   const [ajusteSku, setAjusteSku] = useState("")
@@ -40,11 +40,27 @@ export function EstoqueConsulta() {
   const empresaId = sessao.empresaId!
   const usuarioId = sessao.usuarioEmpresaId!
 
+  const usuario = store.usuariosEmpresa.find((u) => u.id === usuarioId)
+  const lojaDoUsuario = usuario?.lojaId ?? null
+  const isFuncionario = usuario?.papel === "funcionario"
+
   const lojas = store.lojas.filter((l) => l.empresaId === empresaId)
 
-  // Inicializa filtroLoja com a primeira loja da empresa, se ainda estiver no valor default
-  if (!lojas.find((l) => l.id === filtroLoja) && lojas[0]) {
-    setFiltroLoja(lojas[0].id)
+  // Inicializa filtroLoja:
+  // - Funcionário: sempre força para a loja em que está cadastrado (se houver)
+  // - Admin_empresa: primeira loja ativa da empresa
+  if (!filtroLoja) {
+    if (isFuncionario && lojaDoUsuario) {
+      setFiltroLoja(lojaDoUsuario)
+    } else if (lojas[0]) {
+      setFiltroLoja(lojas[0].id)
+    }
+  } else if (!lojas.find((l) => l.id === filtroLoja)) {
+    if (isFuncionario && lojaDoUsuario) {
+      setFiltroLoja(lojaDoUsuario)
+    } else if (lojas[0]) {
+      setFiltroLoja(lojas[0].id)
+    }
   }
 
   const estoqueItens = store.estoque.filter(
@@ -225,8 +241,8 @@ export function EstoqueConsulta() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Estoque</h2>
-          <p className="text-sm text-muted-foreground">Saldos, movimentacoes e transferencias</p>
+          <h2 className="page-title">Estoque</h2>
+          <p className="page-description">Saldos, movimentações e transferências</p>
         </div>
         <div className="flex gap-2">
           <Dialog open={showAjuste} onOpenChange={setShowAjuste}>
@@ -311,8 +327,14 @@ export function EstoqueConsulta() {
 
       {/* Filters */}
       <div className="flex items-center gap-4">
-        <Select value={filtroLoja} onValueChange={setFiltroLoja}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+        <Select
+          value={filtroLoja}
+          onValueChange={setFiltroLoja}
+          disabled={isFuncionario && !!lojaDoUsuario}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Selecione a loja" />
+          </SelectTrigger>
           <SelectContent>
             {lojas.map((l) => (
               <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>

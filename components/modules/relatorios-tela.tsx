@@ -74,8 +74,8 @@ export function RelatoriosTela() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Relatorios</h2>
-        <p className="text-sm text-muted-foreground mt-1">Visao consolidada de vendas, estoque, custos e financeiro</p>
+        <h2 className="page-title">Relatórios</h2>
+        <p className="page-description">Visão consolidada de vendas, estoque, custos e financeiro</p>
       </div>
 
       {/* KPI Overview */}
@@ -137,7 +137,7 @@ export function RelatoriosTela() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Vendas por Forma de Pagamento</CardTitle>
+                <CardTitle className="text-lg text-foreground">Vendas por Forma de Pagamento</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -164,7 +164,7 @@ export function RelatoriosTela() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Indicadores Gerais</CardTitle>
+                <CardTitle className="text-lg text-foreground">Indicadores Gerais</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
                 <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
@@ -191,7 +191,7 @@ export function RelatoriosTela() {
         <TabsContent value="produtos" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base text-card-foreground">Ranking de Produtos</CardTitle>
+              <CardTitle className="text-lg text-foreground">Ranking de Produtos</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
@@ -224,7 +224,7 @@ export function RelatoriosTela() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Custos Fixos</CardTitle>
+                <CardTitle className="text-lg text-foreground">Custos Fixos</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -251,7 +251,7 @@ export function RelatoriosTela() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Custos Variaveis</CardTitle>
+                <CardTitle className="text-lg text-foreground">Custos Variaveis</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -288,7 +288,7 @@ export function RelatoriosTela() {
                   <p className="text-sm text-muted-foreground">Total Pecas</p>
                   <p className="text-xl font-bold font-mono text-foreground">{store.parametrosCusto.totalPecasEstoque}</p>
                 </div>
-                <div className="p-4 rounded-lg bg-[hsl(var(--primary))]/10">
+                <div className="p-4 rounded-lg bg-primary/10">
                   <p className="text-sm text-muted-foreground">Overhead por Peca</p>
                   <p className="text-xl font-bold font-mono text-[hsl(var(--primary))]">R$ {overheadUnitario.toFixed(2)}</p>
                 </div>
@@ -301,7 +301,7 @@ export function RelatoriosTela() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Contas Pendentes</CardTitle>
+                <CardTitle className="text-lg text-foreground">Contas Pendentes</CardTitle>
               </CardHeader>
               <CardContent>
                 {contasPendentes.length === 0 ? (
@@ -340,7 +340,7 @@ export function RelatoriosTela() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Contas Recebidas</CardTitle>
+                <CardTitle className="text-lg text-foreground">Contas Recebidas</CardTitle>
               </CardHeader>
               <CardContent>
                 {contasRecebidas.length === 0 ? (

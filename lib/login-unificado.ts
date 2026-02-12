@@ -21,6 +21,7 @@ type StatusDb = "ativo" | "suspenso" | "desligado"
 interface UsuarioRow {
   id: string
   empresa_id: string | null
+  loja_id: string | null
   nome: string
   login: string
   senha: string
@@ -37,6 +38,7 @@ function rowToUsuarioEmpresa(row: UsuarioRow): UsuarioEmpresa {
   return {
     id: row.id,
     empresaId: row.empresa_id!,
+    lojaId: row.loja_id ?? null,
     nome: row.nome,
     login: row.login,
     senha: "", // nunca colocar hash no store

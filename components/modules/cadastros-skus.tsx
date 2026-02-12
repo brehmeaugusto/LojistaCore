@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
-import { updateStore, addAuditLog, generateId, type SKU } from "@/lib/store"
+import { updateStore, addAuditLog, type SKU } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,29 +16,129 @@ import { Plus, Pencil } from "lucide-react"
 
 export function CadastrosSKUs() {
   const store = useAppStore()
+  const sessao = store.sessao
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ produtoId: "", cor: "", tamanho: "", codigo: "", status: "ativo" as const })
   const [search, setSearch] = useState("")
 
-  const skus = store.skus.filter((s) => s.empresaId === "emp1")
-  const produtos = store.produtos.filter((p) => p.empresaId === "emp1")
+  if (!sessao || sessao.tipo !== "usuario_empresa" || !sessao.empresaId) {
+    return null
+  }
+
+  const empresaId = sessao.empresaId
+
+  const skus = store.skus.filter((s) => s.empresaId === empresaId)
+  const produtos = store.produtos.filter((p) => p.empresaId === empresaId)
 
   const filtered = skus.filter(
     (s) => s.codigo.toLowerCase().includes(search.toLowerCase()) || s.cor.toLowerCase().includes(search.toLowerCase())
   )
 
-  function save() {
+  async function save() {
     if (!form.produtoId || !form.cor || !form.tamanho || !form.codigo) return
-    if (editingId) {
-      updateStore((s) => ({ ...s, skus: s.skus.map((sk) => sk.id === editingId ? { ...sk, ...form, precoBase: 0 } : sk) }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "editar_sku", entidade: "SKU", entidadeId: editingId, antes: "", depois: JSON.stringify(form), motivo: "Edicao" })
-    } else {
-      const id = generateId()
-      updateStore((s) => ({ ...s, skus: [...s.skus, { ...form, id, empresaId: "emp1", precoBase: 0 } as SKU] }))
-      addAuditLog({ usuario: "Admin Empresa", acao: "criar_sku", entidade: "SKU", entidadeId: id, antes: "", depois: JSON.stringify(form), motivo: "Novo SKU" })
+
+    try {
+      if (editingId) {
+        const { data, error } = await supabase
+          .from("skus")
+          .update({
+            produto_id: form.produtoId,
+            cor: form.cor,
+            tamanho: form.tamanho,
+            codigo: form.codigo,
+            status: form.status,
+          })
+          .eq("id", editingId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar SKU no Supabase:", error)
+          alert("Não foi possível salvar o SKU. Verifique se o código é único na empresa e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: SKU = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          produtoId: row.produto_id as string,
+          cor: row.cor as string,
+          tamanho: row.tamanho as string,
+          codigo: row.codigo as string,
+          precoBase: Number(row.preco_base) ?? 0,
+          status: (row.status as SKU["status"]) ?? "ativo",
+        }
+
+        updateStore((s) => ({
+          ...s,
+          skus: s.skus.map((sk) => (sk.id === editingId ? atualizado : sk)),
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_sku",
+          entidade: "SKU",
+          entidadeId: editingId,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Edicao",
+        })
+      } else {
+        const { data, error } = await supabase
+          .from("skus")
+          .insert({
+            empresa_id: empresaId,
+            produto_id: form.produtoId,
+            cor: form.cor,
+            tamanho: form.tamanho,
+            codigo: form.codigo,
+            status: form.status,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar SKU no Supabase:", error)
+          alert("Não foi possível criar o SKU. Verifique se o código é único na empresa e tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const novo: SKU = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          produtoId: row.produto_id as string,
+          cor: row.cor as string,
+          tamanho: row.tamanho as string,
+          codigo: row.codigo as string,
+          precoBase: Number(row.preco_base) ?? 0,
+          status: (row.status as SKU["status"]) ?? "ativo",
+        }
+
+        updateStore((s) => ({
+          ...s,
+          skus: [...s.skus, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_sku",
+          entidade: "SKU",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(form),
+          motivo: "Novo SKU",
+        })
+      }
+
+      setDialogOpen(false)
+    } catch (e) {
+      console.error("Erro inesperado ao salvar SKU:", e)
+      alert("Ocorreu um erro ao salvar o SKU. Tente novamente mais tarde.")
     }
-    setDialogOpen(false)
   }
 
   function getProdutoNome(produtoId: string) {
@@ -48,11 +149,10 @@ export function CadastrosSKUs() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">SKUs / Grade</h2>
-          <p className="text-sm text-muted-foreground">Variantes de produto (cor/tamanho)</p>
+          <h2 className="page-title">SKUs / Grade</h2>
+          <p className="page-description">Variantes de produto (cor/tamanho)</p>
         </div>
-        <Button onClick={() => { setEditingId(null); setForm({ produtoId: "", cor: "", tamanho: "", codigo: "", status: "ativo" }); setDialogOpen(true) }}
-          className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
+        <Button onClick={() => { setEditingId(null); setForm({ produtoId: "", cor: "", tamanho: "", codigo: "", status: "ativo" }); setDialogOpen(true) }}>
           <Plus className="h-4 w-4 mr-2" /> Novo SKU
         </Button>
       </div>
@@ -135,7 +235,7 @@ export function CadastrosSKUs() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={save} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={save}>Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

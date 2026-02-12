@@ -11,6 +11,7 @@ import {
   type CustoVariavel,
   type SnapshotOverhead,
 } from "@/lib/store"
+import { supabase } from "@/lib/supabaseClient"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -45,9 +46,9 @@ export function CustosTela() {
   if (!podeConsultar) {
     return (
       <div className="flex flex-col gap-4">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Custos</h2>
-        <p className="text-sm text-muted-foreground">
-          Voce nao tem permissao para consultar este modulo.
+        <h2 className="page-title">Custos</h2>
+        <p className="page-description">
+          Você não tem permissão para consultar este módulo.
         </p>
       </div>
     )
@@ -65,171 +66,383 @@ export function CustosTela() {
   const totalCustos = totalFixos + totalVariaveis
   const overheadUnitario = totalPecas > 0 ? totalCustos / totalPecas : 0
 
-  function saveFixo() {
+  async function saveFixo() {
     if (!fixoForm.descricao || fixoForm.valor < 0) return
     if (!podeEditar) return
-    if (editingFixoId) {
-      updateStore((s) => ({ ...s, custosFixos: s.custosFixos.map((c) => c.id === editingFixoId ? { ...c, ...fixoForm } : c) }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "editar_custo_fixo",
-        entidade: "CustoFixo",
-        entidadeId: editingFixoId,
-        antes: "",
-        depois: JSON.stringify(fixoForm),
-        motivo: "Alteracao de custo fixo",
-      })
-    } else {
-      const id = generateId()
-      const novo: CustoFixo = { ...fixoForm, id, empresaId, ativo: true } as CustoFixo
-      updateStore((s) => ({
-        ...s,
-        custosFixos: [...s.custosFixos, novo],
-      }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "criar_custo_fixo",
-        entidade: "CustoFixo",
-        entidadeId: id,
-        antes: "",
-        depois: JSON.stringify(fixoForm),
-        motivo: "Novo custo fixo",
-      })
+
+    try {
+      if (editingFixoId) {
+        const { data, error } = await supabase
+          .from("custos_fixos")
+          .update({
+            descricao: fixoForm.descricao,
+            valor: fixoForm.valor,
+          })
+          .eq("id", editingFixoId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar custo_fixo:", error)
+          alert("Não foi possível salvar o custo fixo. Tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: CustoFixo = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          descricao: row.descricao as string,
+          valor: Number(row.valor) ?? 0,
+          ativo: (row.ativo as boolean) ?? true,
+        }
+
+        updateStore((s) => ({
+          ...s,
+          custosFixos: s.custosFixos.map((c) => (c.id === editingFixoId ? atualizado : c)),
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_custo_fixo",
+          entidade: "CustoFixo",
+          entidadeId: editingFixoId,
+          antes: "",
+          depois: JSON.stringify(fixoForm),
+          motivo: "Alteracao de custo fixo",
+        })
+      } else {
+        const { data, error } = await supabase
+          .from("custos_fixos")
+          .insert({
+            empresa_id: empresaId,
+            descricao: fixoForm.descricao,
+            valor: fixoForm.valor,
+            ativo: true,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar custo_fixo:", error)
+          alert("Não foi possível criar o custo fixo. Tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const novo: CustoFixo = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          descricao: row.descricao as string,
+          valor: Number(row.valor) ?? 0,
+          ativo: (row.ativo as boolean) ?? true,
+        }
+
+        updateStore((s) => ({
+          ...s,
+          custosFixos: [...s.custosFixos, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_custo_fixo",
+          entidade: "CustoFixo",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(fixoForm),
+          motivo: "Novo custo fixo",
+        })
+      }
+
+      setFixoDialogOpen(false)
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro inesperado ao salvar custo_fixo:", e)
+      alert("Ocorreu um erro ao salvar o custo fixo. Tente novamente.")
     }
-    setFixoDialogOpen(false)
-    saveSnapshot()
   }
 
-  function saveVar() {
+  async function saveVar() {
     if (!varForm.descricao || varForm.valor < 0) return
     if (!podeEditar) return
-    if (editingVarId) {
-      updateStore((s) => ({
+
+    try {
+      if (editingVarId) {
+        const { data, error } = await supabase
+          .from("custos_variaveis")
+          .update({
+            descricao: varForm.descricao,
+            valor: varForm.valor,
+          })
+          .eq("id", editingVarId)
+          .eq("empresa_id", empresaId)
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao atualizar custo_variavel:", error)
+          alert("Não foi possível salvar o custo variável. Tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const atualizado: CustoVariavel = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          descricao: row.descricao as string,
+          valor: Number(row.valor) ?? 0,
+          ativo: (row.ativo as boolean) ?? true,
+        }
+
+        updateStore((s) => ({
           ...s,
           custosVariaveis: s.custosVariaveis.map((c) =>
-            c.id === editingVarId ? { ...c, ...varForm } : c
+            c.id === editingVarId ? atualizado : c
           ),
         }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "editar_custo_variavel",
-        entidade: "CustoVariavel",
-        entidadeId: editingVarId,
-        antes: "",
-        depois: JSON.stringify(varForm),
-        motivo: "Alteracao de custo variavel",
-      })
-    } else {
-      const id = generateId()
-      const novo: CustoVariavel = { ...varForm, id, empresaId, ativo: true } as CustoVariavel
-      updateStore((s) => ({
-        ...s,
-        custosVariaveis: [...s.custosVariaveis, novo],
-      }))
-      addAuditLog({
-        usuario: sessao.nome,
-        acao: "criar_custo_variavel",
-        entidade: "CustoVariavel",
-        entidadeId: id,
-        antes: "",
-        depois: JSON.stringify(varForm),
-        motivo: "Novo custo variavel",
-      })
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "editar_custo_variavel",
+          entidade: "CustoVariavel",
+          entidadeId: editingVarId,
+          antes: "",
+          depois: JSON.stringify(varForm),
+          motivo: "Alteracao de custo variavel",
+        })
+      } else {
+        const { data, error } = await supabase
+          .from("custos_variaveis")
+          .insert({
+            empresa_id: empresaId,
+            descricao: varForm.descricao,
+            valor: varForm.valor,
+            ativo: true,
+          })
+          .select("*")
+          .maybeSingle()
+
+        if (error) {
+          console.error("Erro ao criar custo_variavel:", error)
+          alert("Não foi possível criar o custo variável. Tente novamente.")
+          return
+        }
+
+        const row = data as any
+        const novo: CustoVariavel = {
+          id: row.id as string,
+          empresaId: row.empresa_id as string,
+          descricao: row.descricao as string,
+          valor: Number(row.valor) ?? 0,
+          ativo: (row.ativo as boolean) ?? true,
+        }
+
+        updateStore((s) => ({
+          ...s,
+          custosVariaveis: [...s.custosVariaveis, novo],
+        }))
+
+        addAuditLog({
+          usuario: sessao.nome,
+          acao: "criar_custo_variavel",
+          entidade: "CustoVariavel",
+          entidadeId: novo.id,
+          antes: "",
+          depois: JSON.stringify(varForm),
+          motivo: "Novo custo variavel",
+        })
+      }
+
+      setVarDialogOpen(false)
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro inesperado ao salvar custo_variavel:", e)
+      alert("Ocorreu um erro ao salvar o custo variável. Tente novamente.")
     }
-    setVarDialogOpen(false)
-    saveSnapshot()
   }
 
-  function removeFixo(id: string) {
+  async function removeFixo(id: string) {
     if (!podeEditar) return
-    updateStore((s) => ({
+    try {
+      const { error } = await supabase
+        .from("custos_fixos")
+        .update({ ativo: false })
+        .eq("id", id)
+        .eq("empresa_id", empresaId)
+
+      if (error) {
+        console.error("Erro ao desativar custo_fixo:", error)
+        alert("Não foi possível remover o custo fixo. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
         ...s,
         custosFixos: s.custosFixos.map((c) =>
           c.id === id ? { ...c, ativo: false } : c
         ),
       }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "remover_custo_fixo",
-      entidade: "CustoFixo",
-      entidadeId: id,
-      antes: "ativo",
-      depois: "inativo",
-      motivo: "Custo fixo removido",
-    })
-    saveSnapshot()
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "remover_custo_fixo",
+        entidade: "CustoFixo",
+        entidadeId: id,
+        antes: "ativo",
+        depois: "inativo",
+        motivo: "Custo fixo removido",
+      })
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro inesperado ao remover custo_fixo:", e)
+      alert("Ocorreu um erro ao remover o custo fixo. Tente novamente.")
+    }
   }
 
-  function removeVar(id: string) {
+  async function removeVar(id: string) {
     if (!podeEditar) return
-    updateStore((s) => ({
+    try {
+      const { error } = await supabase
+        .from("custos_variaveis")
+        .update({ ativo: false })
+        .eq("id", id)
+        .eq("empresa_id", empresaId)
+
+      if (error) {
+        console.error("Erro ao desativar custo_variavel:", error)
+        alert("Não foi possível remover o custo variável. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
         ...s,
         custosVariaveis: s.custosVariaveis.map((c) =>
           c.id === id ? { ...c, ativo: false } : c
         ),
       }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "remover_custo_variavel",
-      entidade: "CustoVariavel",
-      entidadeId: id,
-      antes: "ativo",
-      depois: "inativo",
-      motivo: "Custo variavel removido",
-    })
-    saveSnapshot()
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "remover_custo_variavel",
+        entidade: "CustoVariavel",
+        entidadeId: id,
+        antes: "ativo",
+        depois: "inativo",
+        motivo: "Custo variavel removido",
+      })
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro inesperado ao remover custo_variavel:", e)
+      alert("Ocorreu um erro ao remover o custo variável. Tente novamente.")
+    }
   }
 
-  function updateParametros() {
+  async function updateParametros() {
     if (totalPecas <= 0) return
     if (!podeEditar) return
     const antes = JSON.stringify(store.parametrosCusto)
-    updateStore((s) => ({
-      ...s,
-      parametrosCusto: {
-        ...s.parametrosCusto,
-        totalPecasEstoque: totalPecas,
-        descontoAVistaFixo: descontoFixo,
-      },
-    }))
-    addAuditLog({
-      usuario: sessao.nome,
-      acao: "alterar_parametros_custo",
-      entidade: "ParametrosCusto",
-      entidadeId: empresaId,
-      antes,
-      depois: JSON.stringify({
-        totalPecasEstoque: totalPecas,
-        descontoAVistaFixo: descontoFixo,
-      }),
-      motivo: "Parametros atualizados",
-    })
-    saveSnapshot()
+
+    try {
+      const { data, error } = await supabase
+        .from("parametros_custo")
+        .upsert(
+          {
+            empresa_id: empresaId,
+            total_pecas_estoque: totalPecas,
+            desconto_avista_fixo: descontoFixo,
+          },
+          { onConflict: "empresa_id" }
+        )
+        .select("*")
+        .maybeSingle()
+
+      if (error) {
+        console.error("Erro ao atualizar parametros_custo:", error)
+        alert("Não foi possível salvar os parâmetros de custo. Tente novamente.")
+        return
+      }
+
+      updateStore((s) => ({
+        ...s,
+        parametrosCusto: {
+          empresaId,
+          totalPecasEstoque:
+            (data as any)?.total_pecas_estoque ?? totalPecas,
+          descontoAVistaFixo:
+            (data as any)?.desconto_avista_fixo ?? descontoFixo,
+        },
+      }))
+
+      addAuditLog({
+        usuario: sessao.nome,
+        acao: "alterar_parametros_custo",
+        entidade: "ParametrosCusto",
+        entidadeId: empresaId,
+        antes,
+        depois: JSON.stringify({
+          totalPecasEstoque: totalPecas,
+          descontoAVistaFixo: descontoFixo,
+        }),
+        motivo: "Parametros atualizados",
+      })
+
+      await saveSnapshot()
+    } catch (e) {
+      console.error("Erro inesperado ao salvar parametros_custo:", e)
+      alert("Ocorreu um erro ao salvar os parâmetros. Tente novamente.")
+    }
   }
 
-  function saveSnapshot() {
-    const snapshot: SnapshotOverhead = {
-      id: generateId(),
-      empresaId,
-      dataHora: new Date().toISOString(),
-      totalCustosFixos: totalFixos,
-      totalCustosVariaveis: totalVariaveis,
-      totalCustos,
-      totalPecas,
-      overheadUnitario,
-      usuario: sessao.nome,
+  async function saveSnapshot() {
+    try {
+      const { data, error } = await supabase
+        .from("snapshots_overhead")
+        .insert({
+          empresa_id: empresaId,
+          data_hora: new Date().toISOString(),
+          total_custos_fixos: totalFixos,
+          total_custos_variaveis: totalVariaveis,
+          total_custos: totalCustos,
+          total_pecas: totalPecas,
+          overhead_unitario: overheadUnitario,
+          usuario: sessao.nome,
+        })
+        .select("*")
+        .maybeSingle()
+
+      if (error) {
+        console.error("Erro ao criar snapshot_overhead:", error)
+        return
+      }
+
+      const row = data as any
+      const snapshot: SnapshotOverhead = {
+        id: row.id as string,
+        empresaId: row.empresa_id as string,
+        dataHora: row.data_hora as string,
+        totalCustosFixos: Number(row.total_custos_fixos) ?? totalFixos,
+        totalCustosVariaveis:
+          Number(row.total_custos_variaveis) ?? totalVariaveis,
+        totalCustos: Number(row.total_custos) ?? totalCustos,
+        totalPecas: Number(row.total_pecas) ?? totalPecas,
+        overheadUnitario:
+          Number(row.overhead_unitario) ?? overheadUnitario,
+        usuario: row.usuario as string,
+      }
+
+      updateStore((s) => ({
+        ...s,
+        snapshotsOverhead: [snapshot, ...s.snapshotsOverhead],
+      }))
+    } catch (e) {
+      console.error("Erro inesperado ao salvar snapshot_overhead:", e)
     }
-    updateStore((s) => ({
-      ...s,
-      snapshotsOverhead: [snapshot, ...s.snapshotsOverhead],
-    }))
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Custos</h2>
-        <p className="text-sm text-muted-foreground mt-1">Custos fixos, variaveis e calculo do overhead unitario</p>
+        <h2 className="page-title">Custos</h2>
+        <p className="page-description">Custos fixos, variáveis e cálculo do overhead unitário</p>
       </div>
 
       {/* Summary Cards */}
@@ -267,7 +480,7 @@ export function CustosTela() {
       {/* Parameters */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base text-card-foreground">Parametros de Rateio</CardTitle>
+          <CardTitle className="text-lg text-foreground">Parametros de Rateio</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
@@ -282,7 +495,6 @@ export function CustosTela() {
             <Button
               onClick={updateParametros}
               disabled={!podeEditar}
-              className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
             >
               Atualizar
             </Button>
@@ -296,7 +508,7 @@ export function CustosTela() {
       {/* Custos Fixos */}
       <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base text-card-foreground">Custos Fixos</CardTitle>
+          <CardTitle className="text-lg text-foreground">Custos Fixos</CardTitle>
           <Button
             size="sm"
             onClick={() => {
@@ -305,7 +517,6 @@ export function CustosTela() {
               setFixoDialogOpen(true)
             }}
             disabled={!podeEditar}
-            className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
           >
             <Plus className="h-4 w-4 mr-1" /> Adicionar
           </Button>
@@ -363,7 +574,7 @@ export function CustosTela() {
       {/* Custos Variaveis */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base text-card-foreground">Custos Variaveis</CardTitle>
+          <CardTitle className="text-lg text-foreground">Custos Variaveis</CardTitle>
           <Button
             size="sm"
             onClick={() => {
@@ -372,7 +583,6 @@ export function CustosTela() {
               setVarDialogOpen(true)
             }}
             disabled={!podeEditar}
-            className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
           >
             <Plus className="h-4 w-4 mr-1" /> Adicionar
           </Button>
@@ -431,7 +641,7 @@ export function CustosTela() {
       {store.snapshotsOverhead.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base text-card-foreground">Historico de Overhead (Snapshots)</CardTitle>
+            <CardTitle className="text-lg text-foreground">Historico de Overhead (Snapshots)</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -477,7 +687,7 @@ export function CustosTela() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFixoDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={saveFixo} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={saveFixo} >Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -494,7 +704,7 @@ export function CustosTela() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setVarDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={saveVar} className="bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">Salvar</Button>
+            <Button onClick={saveVar} >Salvar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

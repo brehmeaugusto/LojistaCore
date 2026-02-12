@@ -221,9 +221,9 @@ export function PDVTela() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">PDV - Ponto de Venda</h2>
-        <p className="text-sm text-muted-foreground mt-1">Registro de vendas e pagamentos</p>
+      <div className="flex flex-col gap-1">
+        <h2 className="page-title text-xl font-semibold tracking-tight text-foreground">PDV — Ponto de Venda</h2>
+        <p className="page-description text-sm text-muted-foreground">Registro de vendas e pagamentos</p>
       </div>
 
       {!caixaAberto && (
@@ -247,7 +247,7 @@ export function PDVTela() {
             <div className="lg:col-span-2 flex flex-col gap-4">
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base text-card-foreground">Adicionar Itens</CardTitle>
+                  <CardTitle className="text-lg text-foreground">Adicionar Itens</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="flex gap-2">
@@ -288,7 +288,7 @@ export function PDVTela() {
 
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base text-card-foreground">Itens da Venda</CardTitle>
+                  <CardTitle className="text-lg text-foreground">Itens da Venda</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {itensVenda.length === 0 ? (
@@ -342,7 +342,7 @@ export function PDVTela() {
             {/* Right: Payment */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-card-foreground">Pagamento</CardTitle>
+                <CardTitle className="text-lg text-foreground">Pagamento</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <div className="grid gap-2">
@@ -400,7 +400,7 @@ export function PDVTela() {
         <TabsContent value="historico" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base text-card-foreground">Historico de Vendas</CardTitle>
+              <CardTitle className="text-lg text-foreground">Historico de Vendas</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
