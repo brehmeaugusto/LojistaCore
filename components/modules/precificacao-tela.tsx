@@ -17,13 +17,17 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Plus, Pencil, AlertTriangle, Calculator } from "lucide-react"
+import { Plus, Pencil, AlertTriangle, Calculator, Search } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 
 export function PrecificacaoTela() {
   const store = useAppStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [search, setSearch] = useState("")
+  const [productSearchOpen, setProductSearchOpen] = useState(false)
+  const [productSearch, setProductSearch] = useState("")
   const [form, setForm] = useState({
     codigo: "", item: "", cor: "", tamanho: "", quantidade: 0,
     valorAtacado: "" as string, taxaCartao: 3.5, precoCartao: "" as string,
@@ -54,9 +58,14 @@ export function PrecificacaoTela() {
   const linhas = store.linhasPrecificacao.filter(
     (l) => l.empresaId === empresaId
   )
-  const filtered = linhas.filter(
-    (l) => l.item.toLowerCase().includes(search.toLowerCase()) || l.codigo.toLowerCase().includes(search.toLowerCase())
-  )
+  // Busca por item, código, cor ou tamanho; aceita vários termos (cada um em qualquer campo)
+  const searchTrim = search.trim().toLowerCase()
+  const searchTerms = searchTrim ? searchTrim.split(/\s+/).filter(Boolean) : []
+  const filtered = linhas.filter((l) => {
+    if (!searchTerms.length) return true
+    const full = `${l.codigo} ${l.item} ${l.cor} ${l.tamanho}`.toLowerCase()
+    return searchTerms.every((t) => full.includes(t))
+  })
 
   // Overhead calculation
   const totalCustosFixos = store.custosFixos
@@ -95,6 +104,28 @@ export function PrecificacaoTela() {
 
   const linhasCompletas = linhas.filter(isLinhaCompleta)
   const linhasIncompletas = linhas.filter((l) => !isLinhaCompleta(l))
+
+  // Produtos/SKUs para o seletor no diálogo (empresa atual)
+  const produtosEmpresa = store.produtos.filter(
+    (p) => p.empresaId === empresaId && p.status === "ativo"
+  )
+  const skusEmpresa = store.skus.filter(
+    (s) => s.empresaId === empresaId && s.status === "ativo"
+  )
+  const skusComProduto = skusEmpresa
+    .map((sku) => ({
+      sku,
+      produto: produtosEmpresa.find((p) => p.id === sku.produtoId),
+    }))
+    .filter((x): x is { sku: typeof skusEmpresa[0]; produto: NonNullable<typeof produtosEmpresa[0]> } => !!x.produto)
+  const productSearchLower = productSearch.trim().toLowerCase()
+  const skusFiltrados =
+    !productSearchLower
+      ? skusComProduto
+      : skusComProduto.filter(({ sku, produto }) => {
+          const text = `${produto.nome} ${produto.codigoInterno} ${sku.codigo} ${sku.cor} ${sku.tamanho}`.toLowerCase()
+          return productSearchLower.split(/\s+/).every((t) => text.includes(t))
+        })
   const margemMedia = linhasCompletas.length > 0
     ? linhasCompletas.reduce((s, l) => s + calcMargem(l), 0) / linhasCompletas.length
     : 0
@@ -103,6 +134,8 @@ export function PrecificacaoTela() {
   function openCreate() {
     setEditingId(null)
     setForm({ codigo: "", item: "", cor: "", tamanho: "", quantidade: 0, valorAtacado: "", taxaCartao: 3.5, precoCartao: "", descontoAVista: 0, modoPrecoAVista: "padrao" })
+    setProductSearch("")
+    setProductSearchOpen(false)
     setDialogOpen(true)
   }
 
@@ -331,7 +364,7 @@ export function PrecificacaoTela() {
       {/* Table */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <Input placeholder="Buscar por item ou codigo..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
+          <Input placeholder="Buscar por item, codigo, cor ou tamanho..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
           <Button
             size="sm"
             onClick={openCreate}
@@ -430,6 +463,51 @@ export function PrecificacaoTela() {
             <DialogDescription>Preencha os dados do item para precificacao</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
+            {/* Buscar produto para preencher código, item, cor e tamanho */}
+            <div className="grid gap-2">
+              <Label>Buscar produto</Label>
+              <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                    {form.item || form.codigo ? `${form.codigo} — ${form.item} ${form.cor ? `· ${form.cor}` : ""} ${form.tamanho ? `· ${form.tamanho}` : ""}` : "Digite nome, codigo, cor ou tamanho..."}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput placeholder="Buscar produto ou SKU..." value={productSearch} onValueChange={setProductSearch} />
+                    <CommandList>
+                      <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {skusFiltrados.slice(0, 50).map(({ sku, produto }) => (
+                          <CommandItem
+                            key={sku.id}
+                            value={`${produto.codigoInterno}-${sku.id}`}
+                            onSelect={() => {
+                              setForm((f) => ({
+                                ...f,
+                                codigo: produto.codigoInterno,
+                                item: produto.nome,
+                                cor: sku.cor,
+                                tamanho: sku.tamanho,
+                              }))
+                              setProductSearch("")
+                              setProductSearchOpen(false)
+                            }}
+                          >
+                            <span className="font-medium">{produto.nome}</span>
+                            <span className="text-muted-foreground ml-2 text-xs font-mono">{produto.codigoInterno}</span>
+                            {(sku.cor || sku.tamanho) && (
+                              <span className="text-muted-foreground ml-2 text-xs">· {[sku.cor, sku.tamanho].filter(Boolean).join(" / ")}</span>
+                            )}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2"><Label>Codigo *</Label><Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} /></div>
               <div className="grid gap-2"><Label>Item *</Label><Input value={form.item} onChange={(e) => setForm({ ...form, item: e.target.value })} /></div>
