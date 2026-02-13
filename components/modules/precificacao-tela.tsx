@@ -30,10 +30,9 @@ export function PrecificacaoTela() {
   const [productSearch, setProductSearch] = useState("")
   const [form, setForm] = useState({
     codigo: "", item: "", cor: "", tamanho: "", quantidade: 0,
-    valorAtacado: "" as string, taxaCartao: 3.5, precoCartao: "" as string,
+    valorAtacado: "" as string, precoCartao: "" as string,
     descontoAVista: 0, modoPrecoAVista: "padrao" as "padrao" | "excecao",
   })
-
   const sessao = store.sessao
   if (!sessao || sessao.tipo !== "usuario_empresa") {
     return null
@@ -133,7 +132,7 @@ export function PrecificacaoTela() {
 
   function openCreate() {
     setEditingId(null)
-    setForm({ codigo: "", item: "", cor: "", tamanho: "", quantidade: 0, valorAtacado: "", taxaCartao: 3.5, precoCartao: "", descontoAVista: 0, modoPrecoAVista: "padrao" })
+    setForm({ codigo: "", item: "", cor: "", tamanho: "", quantidade: 0, valorAtacado: "", precoCartao: "", descontoAVista: 0, modoPrecoAVista: "padrao" })
     setProductSearch("")
     setProductSearchOpen(false)
     setDialogOpen(true)
@@ -144,7 +143,6 @@ export function PrecificacaoTela() {
     setForm({
       codigo: l.codigo, item: l.item, cor: l.cor, tamanho: l.tamanho, quantidade: l.quantidade,
       valorAtacado: l.valorAtacado !== null ? String(l.valorAtacado) : "",
-      taxaCartao: l.taxaCartao,
       precoCartao: l.precoCartao !== null ? String(l.precoCartao) : "",
       descontoAVista: l.descontoAVista, modoPrecoAVista: l.modoPrecoAVista,
     })
@@ -161,7 +159,6 @@ export function PrecificacaoTela() {
       tamanho: form.tamanho,
       quantidade: form.quantidade,
       valorAtacado: form.valorAtacado !== "" ? Number(form.valorAtacado) : null,
-      taxaCartao: form.taxaCartao,
       precoCartao: form.precoCartao !== "" ? Number(form.precoCartao) : null,
       descontoAVista: form.descontoAVista,
       modoPrecoAVista: form.modoPrecoAVista,
@@ -180,7 +177,6 @@ export function PrecificacaoTela() {
             tamanho: data.tamanho,
             quantidade: data.quantidade,
             valor_atacado: data.valorAtacado,
-            taxa_cartao: data.taxaCartao,
             preco_cartao: data.precoCartao,
             desconto_avista: data.descontoAVista,
             modo_preco_avista: data.modoPrecoAVista,
@@ -208,7 +204,6 @@ export function PrecificacaoTela() {
             (row as any).valor_atacado != null
               ? Number((row as any).valor_atacado)
               : null,
-          taxaCartao: Number((row as any).taxa_cartao) ?? data.taxaCartao,
           precoCartao:
             (row as any).preco_cartao != null
               ? Number((row as any).preco_cartao)
@@ -247,7 +242,6 @@ export function PrecificacaoTela() {
             tamanho: data.tamanho,
             quantidade: data.quantidade,
             valor_atacado: data.valorAtacado,
-            taxa_cartao: data.taxaCartao,
             preco_cartao: data.precoCartao,
             desconto_avista: data.descontoAVista,
             modo_preco_avista: data.modoPrecoAVista,
@@ -273,7 +267,6 @@ export function PrecificacaoTela() {
             (row as any).valor_atacado != null
               ? Number((row as any).valor_atacado)
               : null,
-          taxaCartao: Number((row as any).taxa_cartao) ?? data.taxaCartao,
           precoCartao:
             (row as any).preco_cartao != null
               ? Number((row as any).preco_cartao)
@@ -385,7 +378,7 @@ export function PrecificacaoTela() {
                 <TableHead className="text-right">Atacado</TableHead>
                 <TableHead className="text-right">Overhead</TableHead>
                 <TableHead className="text-right">Custo Total</TableHead>
-                <TableHead className="text-right">Preco Cartao</TableHead>
+                <TableHead className="text-right">Preco</TableHead>
                 <TableHead className="text-right">Margem</TableHead>
                 <TableHead className="text-center">Modo</TableHead>
                 <TableHead className="text-right">Preco a Vista</TableHead>
@@ -517,11 +510,8 @@ export function PrecificacaoTela() {
               <div className="grid gap-2"><Label>Tamanho</Label><Input value={form.tamanho} onChange={(e) => setForm({ ...form, tamanho: e.target.value })} /></div>
               <div className="grid gap-2"><Label>Quantidade</Label><Input type="number" value={form.quantidade} onChange={(e) => setForm({ ...form, quantidade: Number(e.target.value) })} /></div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2"><Label>Valor Atacado (R$)</Label><Input type="number" step={0.01} value={form.valorAtacado} onChange={(e) => setForm({ ...form, valorAtacado: e.target.value })} placeholder="Deixe vazio se nao informado" /></div>
-              <div className="grid gap-2"><Label>Taxa Cartao (%)</Label><Input type="number" step={0.1} value={form.taxaCartao} onChange={(e) => setForm({ ...form, taxaCartao: Number(e.target.value) })} /></div>
-            </div>
-            <div className="grid gap-2"><Label>Preco Cartao (R$)</Label><Input type="number" step={0.01} value={form.precoCartao} onChange={(e) => setForm({ ...form, precoCartao: e.target.value })} placeholder="Deixe vazio se nao informado" /></div>
+            <div className="grid gap-2"><Label>Valor Atacado (R$)</Label><Input type="number" step={0.01} value={form.valorAtacado} onChange={(e) => setForm({ ...form, valorAtacado: e.target.value })} placeholder="Deixe vazio se nao informado" /></div>
+            <div className="grid gap-2"><Label>Preco (R$)</Label><Input type="number" step={0.01} value={form.precoCartao} onChange={(e) => setForm({ ...form, precoCartao: e.target.value })} placeholder="Preco de venda base (a vista e cartao no PDV)" /></div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Modo Preco a Vista</Label>
@@ -540,24 +530,32 @@ export function PrecificacaoTela() {
 
             {/* Preview */}
             {form.valorAtacado !== "" && form.precoCartao !== "" && (
-              <div className="mt-2 p-3 bg-muted rounded-lg">
-                <p className="text-sm font-semibold text-foreground mb-2">Pre-visualizacao</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <span className="text-muted-foreground">Overhead:</span>
-                  <span className="font-mono text-foreground">R$ {overheadUnitario.toFixed(2)}</span>
-                  <span className="text-muted-foreground">Custo Total:</span>
-                  <span className="font-mono text-foreground">R$ {(Number(form.valorAtacado) + overheadUnitario).toFixed(2)}</span>
-                  <span className="text-muted-foreground">Margem:</span>
-                  <span className={`font-mono font-semibold ${((Number(form.precoCartao) - (Number(form.valorAtacado) + overheadUnitario)) / Number(form.precoCartao) * 100) < 0 ? "text-[hsl(var(--destructive))]" : "text-[hsl(var(--success))]"}`}>
-                    {((Number(form.precoCartao) - (Number(form.valorAtacado) + overheadUnitario)) / Number(form.precoCartao) * 100).toFixed(1)}%
-                  </span>
-                  <span className="text-muted-foreground">Preco a Vista:</span>
-                  <span className="font-mono font-semibold text-[hsl(var(--primary))]">
-                    R$ {(form.modoPrecoAVista === "padrao"
-                      ? Number(form.precoCartao) * (1 - descontoFixoPadrao / 100)
-                      : Number(form.precoCartao) * (1 - form.descontoAVista / 100)
-                    ).toFixed(2)}
-                  </span>
+              <div className="mt-2 p-2.5 bg-muted rounded-lg max-w-full min-w-0">
+                <p className="text-xs font-semibold text-foreground mb-1.5">Pre-visualizacao</p>
+                <div className="grid grid-cols-4 gap-x-2 gap-y-1 text-xs">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-muted-foreground truncate">Overhead</span>
+                    <span className="font-mono text-foreground truncate">R$ {overheadUnitario.toFixed(2)}</span>
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-muted-foreground truncate">Custo Total</span>
+                    <span className="font-mono text-foreground truncate">R$ {(Number(form.valorAtacado) + overheadUnitario).toFixed(2)}</span>
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-muted-foreground truncate">Margem</span>
+                    <span className={`font-mono font-semibold truncate ${((Number(form.precoCartao) - (Number(form.valorAtacado) + overheadUnitario)) / Number(form.precoCartao) * 100) < 0 ? "text-[hsl(var(--destructive))]" : "text-[hsl(var(--success))]"}`}>
+                      {((Number(form.precoCartao) - (Number(form.valorAtacado) + overheadUnitario)) / Number(form.precoCartao) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-muted-foreground truncate">Preco a Vista</span>
+                    <span className="font-mono font-semibold text-[hsl(var(--primary))] truncate">
+                      R$ {(form.modoPrecoAVista === "padrao"
+                        ? Number(form.precoCartao) * (1 - descontoFixoPadrao / 100)
+                        : Number(form.precoCartao) * (1 - form.descontoAVista / 100)
+                      ).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}

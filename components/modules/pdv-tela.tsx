@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useAppStore } from "@/hooks/use-store"
+import { usePdvFullscreen } from "@/components/app-shell"
 import {
   updateStore,
   addAuditLog,
@@ -10,7 +11,13 @@ import {
   type Venda,
   type VendaItem,
   type Pagamento,
+  type LinhaPrecificacao,
+  type TipoTaxaCartao,
+  type BandeiraCartao,
+  type EstoqueSaldo,
+  type MovimentoEstoque,
 } from "@/lib/store"
+import { persistEstoqueSaldo, persistMovimentoEstoque, persistVenda, persistContaReceber } from "@/lib/supabase-sync"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,7 +27,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
-import { ShoppingCart, Plus, Trash2, CreditCard, Banknote, Smartphone, AlertTriangle } from "lucide-react"
+import { ShoppingCart, Plus, Trash2, CreditCard, Banknote, Smartphone, AlertTriangle, Monitor } from "lucide-react"
+
+const BANDEIRAS: { id: BandeiraCartao; label: string }[] = [
+  { id: "visa", label: "VISA" },
+  { id: "mastercard", label: "Mastercard" },
+  { id: "elo", label: "Elo" },
+  { id: "hipercard", label: "Hipercard" },
+  { id: "amex", label: "Amex" },
+]
 
 export function PDVTela() {
   const store = useAppStore()
@@ -28,6 +43,7 @@ export function PDVTela() {
   const [itensVenda, setItensVenda] = useState<VendaItem[]>([])
   const [formaPagamento, setFormaPagamento] = useState<Pagamento["forma"]>("dinheiro")
   const [parcelas, setParcelas] = useState(1)
+  const [bandeiraSelecionada, setBandeiraSelecionada] = useState<BandeiraCartao>("visa")
   const [vendedor, setVendedor] = useState("")
 
   const sessao = store.sessao
@@ -61,6 +77,68 @@ export function PDVTela() {
     0
   )
 
+  /** Tipo de taxa de cartão pela quantidade de parcelas (crédito à vista, 2-6x, 7-12x). */
+  function getTipoTaxaPorParcelas(n: number): TipoTaxaCartao {
+    if (n <= 1) return "credito"
+    if (n <= 6) return "parcelado_2_6"
+    return "parcelado_7_12"
+  }
+
+  /** Taxa (%) da bandeira para o tipo (parcelas). Débito usa tipo "debito". */
+  function getTaxaCartaoParaBandeira(bandeira: BandeiraCartao, nParcelas: number, forma: "cartao_credito" | "cartao_debito"): number {
+    const tipo: TipoTaxaCartao = forma === "cartao_debito" ? "debito" : getTipoTaxaPorParcelas(nParcelas)
+    const row = store.taxasCartao.find(
+      (t) => t.empresaId === empresaId && t.bandeira === bandeira && t.tipo === tipo && t.taxa != null
+    )
+    return row?.taxa ?? 0
+  }
+
+  const taxaCartaoAtual =
+    formaPagamento === "cartao_credito"
+      ? getTaxaCartaoParaBandeira(bandeiraSelecionada, parcelas, "cartao_credito")
+      : formaPagamento === "cartao_debito"
+        ? getTaxaCartaoParaBandeira(bandeiraSelecionada, 1, "cartao_debito")
+        : 0
+
+  /** Preço unitário: à vista = preço com desconto; cartão = preço base com taxa da bandeira. */
+  function precoPorFormaPagamento(
+    linha: LinhaPrecificacao | undefined,
+    forma: Pagamento["forma"],
+    descontoFixoPadrao: number,
+    nParcelas: number,
+    bandeira: BandeiraCartao = "visa"
+  ): number {
+    if (!linha?.precoCartao) return 0
+    const isAVista = forma === "dinheiro" || forma === "pix"
+    if (forma === "cartao_debito" || isAVista) {
+      if (linha.modoPrecoAVista === "padrao") {
+        return linha.precoCartao * (1 - descontoFixoPadrao / 100)
+      }
+      return linha.precoCartao * (1 - linha.descontoAVista / 100)
+    }
+    if (forma === "cartao_credito") {
+      const taxa = getTaxaCartaoParaBandeira(bandeira, nParcelas, "cartao_credito")
+      return linha.precoCartao * (1 + taxa / 100)
+    }
+    return linha.precoCartao * (1 - descontoFixoPadrao / 100)
+  }
+
+  /** Atualiza precoUnitario dos itens conforme forma de pagamento, parcelas e bandeira (cartão). */
+  function atualizarPrecosPorFormaPagamento(forma: Pagamento["forma"], nParcelas: number = parcelas, bandeira: BandeiraCartao = bandeiraSelecionada) {
+    const descontoFixo = store.parametrosCusto.descontoAVistaFixo
+    setItensVenda((prev) =>
+      prev.map((item) => {
+        const sku = store.skus.find((s) => s.id === item.skuId)
+        const produto = sku ? store.produtos.find((p) => p.id === sku.produtoId) : undefined
+        const linha = store.linhasPrecificacao.find(
+          (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
+        )
+        const preco = precoPorFormaPagamento(linha, forma, descontoFixo, nParcelas, bandeira)
+        return { ...item, precoUnitario: preco }
+      })
+    )
+  }
+
   function adicionarItem(skuId: string) {
     if (!lojaId) return
     const sku = skus.find((s) => s.id === skuId)
@@ -75,11 +153,17 @@ export function PDVTela() {
       return // Block sale if no stock
     }
 
-    // Get price from precificacao
+    // Preço conforme forma de pagamento (à vista vs cartão)
     const linhaPrecificacao = store.linhasPrecificacao.find(
       (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
     )
-    const preco = linhaPrecificacao?.precoCartao ?? 0
+    const preco = precoPorFormaPagamento(
+      linhaPrecificacao,
+      formaPagamento,
+      store.parametrosCusto.descontoAVistaFixo,
+      parcelas,
+      bandeiraSelecionada
+    )
 
     const existing = itensVenda.find((i) => i.skuId === skuId)
     if (existing) {
@@ -138,7 +222,14 @@ export function PDVTela() {
       clienteId: "",
       itens: itensVenda,
       pagamentos: [
-        { forma: formaPagamento, valor: totalVenda, parcelas },
+        {
+          forma: formaPagamento,
+          valor: totalVenda,
+          parcelas,
+          ...((formaPagamento === "cartao_credito" || formaPagamento === "cartao_debito") && {
+            bandeira: bandeiraSelecionada,
+          }),
+        },
       ],
       status: "finalizada",
       dataHora: new Date().toISOString(),
@@ -164,28 +255,47 @@ export function PDVTela() {
     }
 
     // Update store: add sale, deduct stock, add financial record
+    const saldosParaPersistir: EstoqueSaldo[] = []
+    const movimentosParaPersistir: MovimentoEstoque[] = []
+
     updateStore((s) => {
       let newEstoque = [...s.estoque]
       const newMovimentos = [...s.movimentosEstoque]
 
       for (const item of itensVenda) {
+        const estoqueAtual = newEstoque.find((e) => e.skuId === item.skuId && e.lojaId === lojaIdVenda)
+        const novoDisponivel = (estoqueAtual?.disponivel ?? 0) - item.quantidade
+        const saldoAtualizado = estoqueAtual
+          ? { ...estoqueAtual, disponivel: novoDisponivel }
+          : {
+              id: generateId(),
+              empresaId,
+              lojaId: lojaIdVenda,
+              skuId: item.skuId,
+              disponivel: novoDisponivel,
+              reservado: 0,
+              emTransito: 0,
+            }
         newEstoque = newEstoque.map((e) =>
-          e.skuId === item.skuId && e.lojaId === lojaIdVenda
-            ? { ...e, disponivel: e.disponivel - item.quantidade }
-            : e
+          e.skuId === item.skuId && e.lojaId === lojaIdVenda ? saldoAtualizado : e
         )
-        newMovimentos.push({
+        if (!estoqueAtual) newEstoque.push(saldoAtualizado)
+        saldosParaPersistir.push(saldoAtualizado)
+
+        const mov = {
           id: generateId(),
           empresaId,
           lojaId: lojaIdVenda,
           skuId: item.skuId,
-          tipo: "saida",
+          tipo: "saida" as const,
           quantidade: item.quantidade,
           motivo: `Venda ${vendaId}`,
           usuario: sessao.nome,
           dataHora: new Date().toISOString(),
           referencia: vendaId,
-        })
+        }
+        newMovimentos.push(mov)
+        movimentosParaPersistir.push(mov)
       }
 
       return {
@@ -196,6 +306,19 @@ export function PDVTela() {
         contasReceber: [...s.contasReceber, newConta],
       }
     })
+
+    saldosParaPersistir.forEach((saldo) => persistEstoqueSaldo(saldo).catch((err) => console.error("Erro ao salvar estoque no banco:", err instanceof Error ? err.message : String(err))))
+    movimentosParaPersistir.forEach((m) => persistMovimentoEstoque(m).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err))))
+    persistVenda(venda)
+      .then(() =>
+        persistContaReceber(newConta).catch((err) =>
+          console.error("Erro ao salvar conta a receber:", err instanceof Error ? err.message : String(err))
+        )
+      )
+      .catch((err) => {
+        console.error("Erro ao salvar venda no banco:", err instanceof Error ? err.message : String(err))
+        alert("Venda registrada localmente, mas não foi possível salvar no servidor. Tente sincronizar mais tarde.")
+      })
 
     addAuditLog({
       usuario: sessao.nome,
@@ -219,11 +342,24 @@ export function PDVTela() {
     vale_troca: ShoppingCart,
   }
 
+  const pdvFullscreen = usePdvFullscreen()
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h2 className="page-title text-xl font-semibold tracking-tight text-foreground">PDV — Ponto de Venda</h2>
-        <p className="page-description text-sm text-muted-foreground">Registro de vendas e pagamentos</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="page-title text-xl font-semibold tracking-tight text-foreground">PDV — Ponto de Venda</h2>
+          <p className="page-description text-sm text-muted-foreground">Registro de vendas e pagamentos</p>
+        </div>
+        {pdvFullscreen?.canAccessPDVFullscreen && (
+          <Button
+            onClick={pdvFullscreen.enterPdvFullscreen}
+            className="flex items-center gap-2 shrink-0"
+          >
+            <Monitor className="h-4 w-4" />
+            Entrar no PDV
+          </Button>
+        )}
       </div>
 
       {!caixaAberto && (
@@ -352,7 +488,14 @@ export function PDVTela() {
                 <Separator />
                 <div className="grid gap-2">
                   <Label>Forma de Pagamento</Label>
-                  <Select value={formaPagamento} onValueChange={(v) => setFormaPagamento(v as Pagamento["forma"])}>
+                  <Select
+                    value={formaPagamento}
+                    onValueChange={(v) => {
+                      const forma = v as Pagamento["forma"]
+                      setFormaPagamento(forma)
+                      atualizarPrecosPorFormaPagamento(forma, forma === "cartao_credito" ? parcelas : 1)
+                    }}
+                  >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="dinheiro">Dinheiro</SelectItem>
@@ -363,25 +506,74 @@ export function PDVTela() {
                     </SelectContent>
                   </Select>
                 </div>
-                {formaPagamento === "cartao_credito" && (
+                {(formaPagamento === "cartao_credito" || formaPagamento === "cartao_debito") && (
                   <div className="grid gap-2">
-                    <Label>Parcelas</Label>
-                    <Select value={String(parcelas)} onValueChange={(v) => setParcelas(Number(v))}>
+                    <Label>Bandeira</Label>
+                    <Select
+                      value={bandeiraSelecionada}
+                      onValueChange={(v) => {
+                        const b = v as BandeiraCartao
+                        setBandeiraSelecionada(b)
+                        atualizarPrecosPorFormaPagamento(formaPagamento, formaPagamento === "cartao_credito" ? parcelas : 1, b)
+                      }}
+                    >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {[1, 2, 3, 4, 5, 6, 10, 12].map((n) => (
-                          <SelectItem key={n} value={String(n)}>{n}x</SelectItem>
+                        {BANDEIRAS.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                 )}
+                {formaPagamento === "cartao_credito" && (
+                  <div className="grid gap-2">
+                    <Label>Parcelas</Label>
+                    <Select
+                      value={String(parcelas)}
+                      onValueChange={(v) => {
+                        const n = Number(v)
+                        setParcelas(n)
+                        atualizarPrecosPorFormaPagamento("cartao_credito", n)
+                      }}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, 5, 6, 10, 12].map((n) => {
+                          const taxa = getTaxaCartaoParaBandeira(bandeiraSelecionada, n, "cartao_credito")
+                          const totalParaN = itensVenda.reduce((s, item) => {
+                            const sku = store.skus.find((x) => x.id === item.skuId)
+                            const produto = sku ? store.produtos.find((p) => p.id === sku.produtoId) : undefined
+                            const linha = store.linhasPrecificacao.find(
+                              (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
+                            )
+                            const preco = precoPorFormaPagamento(linha, "cartao_credito", store.parametrosCusto.descontoAVistaFixo, n, bandeiraSelecionada)
+                            return s + preco * item.quantidade - item.desconto
+                          }, 0)
+                          const valorParcela = n > 0 ? totalParaN / n : 0
+                          return (
+                            <SelectItem key={n} value={String(n)}>
+                              {n}x {taxa > 0 ? `(${taxa.toFixed(2)}%)` : ""} — R$ {valorParcela.toFixed(2)}/parcela
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
+                    {taxaCartaoAtual > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Taxa aplicada: {taxaCartaoAtual.toFixed(2)}%
+                      </p>
+                    )}
+                  </div>
+                )}
                 <Separator />
-                <div className="flex items-center justify-between">
-                  <span className="text-lg font-semibold text-foreground">Total</span>
-                  <span className="text-2xl font-bold text-[hsl(var(--primary))]">
-                    R$ {totalVenda.toFixed(2)}
-                  </span>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-semibold text-foreground">Total</span>
+                    <span className="text-2xl font-bold text-[hsl(var(--primary))]">
+                      R$ {totalVenda.toFixed(2)}
+                    </span>
+                  </div>
                 </div>
                 <Button
                   size="lg"
@@ -424,7 +616,10 @@ export function PDVTela() {
                       <TableCell className="text-foreground">{v.operador}</TableCell>
                       <TableCell className="text-muted-foreground">{v.vendedor}</TableCell>
                       <TableCell className="text-muted-foreground">{v.itens.length} item(s)</TableCell>
-                      <TableCell className="text-muted-foreground">{v.pagamentos[0]?.forma.replace("_", " ")}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {v.pagamentos[0]?.forma.replace("_", " ")}
+                        {v.pagamentos[0]?.bandeira && ` (${BANDEIRAS.find((b) => b.id === v.pagamentos[0]?.bandeira)?.label ?? v.pagamentos[0].bandeira})`}
+                      </TableCell>
                       <TableCell className="text-right font-mono font-semibold text-foreground">R$ {v.total.toFixed(2)}</TableCell>
                       <TableCell>
                         <Badge className={v.status === "finalizada" ? "bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]" : v.status === "cancelada" ? "bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))]" : v.status === "rascunho" ? "bg-secondary text-secondary-foreground" : "bg-[hsl(var(--warning))] text-[hsl(var(--warning-foreground))]"}>

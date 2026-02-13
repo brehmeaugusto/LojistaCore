@@ -8,6 +8,7 @@ import {
   generateId,
   temPermissao,
 } from "@/lib/store"
+import { persistEstoqueSaldo, persistMovimentoEstoque } from "@/lib/supabase-sync"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Package, ArrowRightLeft, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react"
+import { Package, ArrowRightLeft, TrendingUp, TrendingDown, AlertTriangle, Plus } from "lucide-react"
 
 export function EstoqueConsulta() {
   const store = useAppStore()
@@ -31,6 +32,16 @@ export function EstoqueConsulta() {
   const [transfSku, setTransfSku] = useState("")
   const [transfQtd, setTransfQtd] = useState("")
   const [transfDestino, setTransfDestino] = useState("")
+  // Entrada rápida a partir da linha da tabela (SKU já escolhido)
+  const [showEntradaRapida, setShowEntradaRapida] = useState(false)
+  const [entradaRapidaSku, setEntradaRapidaSku] = useState("")
+  const [entradaRapidaQtd, setEntradaRapidaQtd] = useState("")
+  const [entradaRapidaMotivo, setEntradaRapidaMotivo] = useState("")
+  // Entrada de estoque (qualquer SKU – botão principal)
+  const [showEntradaEstoque, setShowEntradaEstoque] = useState(false)
+  const [entradaSku, setEntradaSku] = useState("")
+  const [entradaQtd, setEntradaQtd] = useState("")
+  const [entradaMotivo, setEntradaMotivo] = useState("")
 
   const sessao = store.sessao
   if (!sessao || sessao.tipo !== "usuario_empresa") {
@@ -150,6 +161,9 @@ export function EstoqueConsulta() {
       movimentosEstoque: [...s.movimentosEstoque, movimento],
     }))
 
+    persistEstoqueSaldo(estoqueAtualizado).catch((err) => console.error("Erro ao salvar estoque no banco:", err instanceof Error ? err.message : String(err)))
+    persistMovimentoEstoque(movimento).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err)))
+
     addAuditLog({
       usuario: sessao.nome,
       acao: "ajuste_estoque",
@@ -221,6 +235,10 @@ export function EstoqueConsulta() {
       movimentosEstoque: [...s.movimentosEstoque, movimento],
     }))
 
+    if (origemAtualizado) persistEstoqueSaldo(origemAtualizado).catch((err) => console.error("Erro ao salvar estoque origem no banco:", err instanceof Error ? err.message : String(err)))
+    persistEstoqueSaldo(destinoAtualizado).catch((err) => console.error("Erro ao salvar estoque destino no banco:", err instanceof Error ? err.message : String(err)))
+    persistMovimentoEstoque(movimento).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err)))
+
     addAuditLog({
       usuario: sessao.nome,
       acao: "transferencia_estoque",
@@ -237,6 +255,127 @@ export function EstoqueConsulta() {
     setTransfDestino("")
   }
 
+  function abrirEntradaRapida(skuId: string) {
+    setEntradaRapidaSku(skuId)
+    setEntradaRapidaQtd("")
+    setEntradaRapidaMotivo("")
+    setShowEntradaRapida(true)
+  }
+
+  function realizarEntradaRapida() {
+    if (!temPermissao(usuarioId, "ESTOQUE_AJUSTE")) return
+    if (!entradaRapidaSku || !entradaRapidaQtd) return
+    const qtd = Number(entradaRapidaQtd)
+    if (qtd <= 0) return
+
+    const estoqueItem = store.estoque.find(
+      (e) => e.skuId === entradaRapidaSku && e.lojaId === filtroLoja
+    )
+    const novoDisponivel = (estoqueItem?.disponivel ?? 0) + qtd
+    const estoqueAtualizado = estoqueItem
+      ? { ...estoqueItem, disponivel: novoDisponivel }
+      : {
+          id: generateId(),
+          empresaId,
+          lojaId: filtroLoja,
+          skuId: entradaRapidaSku,
+          disponivel: novoDisponivel,
+          reservado: 0,
+          emTransito: 0,
+        }
+    const movimento = {
+      id: generateId(),
+      empresaId,
+      lojaId: filtroLoja,
+      skuId: entradaRapidaSku,
+      tipo: "ajuste" as const,
+      quantidade: qtd,
+      motivo: entradaRapidaMotivo || "Entrada de estoque",
+      usuario: sessao.nome,
+      dataHora: new Date().toISOString(),
+      referencia: "",
+    }
+    updateStore((s) => ({
+      ...s,
+      estoque: s.estoque.some((e) => e.skuId === entradaRapidaSku && e.lojaId === filtroLoja)
+        ? s.estoque.map((e) =>
+            e.skuId === entradaRapidaSku && e.lojaId === filtroLoja ? estoqueAtualizado : e
+          )
+        : [...s.estoque, estoqueAtualizado],
+      movimentosEstoque: [...s.movimentosEstoque, movimento],
+    }))
+    persistEstoqueSaldo(estoqueAtualizado).catch((err) => console.error("Erro ao salvar estoque no banco:", err instanceof Error ? err.message : String(err)))
+    persistMovimentoEstoque(movimento).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err)))
+    addAuditLog({
+      usuario: sessao.nome,
+      acao: "ajuste_estoque",
+      entidade: "Estoque",
+      entidadeId: entradaRapidaSku,
+      antes: JSON.stringify({ disponivel: estoqueItem?.disponivel }),
+      depois: JSON.stringify({ disponivel: novoDisponivel }),
+      motivo: entradaRapidaMotivo || "Entrada de estoque",
+    })
+    setShowEntradaRapida(false)
+    setEntradaRapidaSku("")
+    setEntradaRapidaQtd("")
+    setEntradaRapidaMotivo("")
+  }
+
+  function realizarEntradaEstoque() {
+    if (!temPermissao(usuarioId, "ESTOQUE_AJUSTE")) return
+    if (!entradaSku || !entradaQtd) return
+    const qtd = Number(entradaQtd)
+    if (qtd <= 0) return
+
+    const estoqueItem = store.estoque.find((e) => e.skuId === entradaSku && e.lojaId === filtroLoja)
+    const novoDisponivel = (estoqueItem?.disponivel ?? 0) + qtd
+    const estoqueAtualizado = estoqueItem
+      ? { ...estoqueItem, disponivel: novoDisponivel }
+      : {
+          id: generateId(),
+          empresaId,
+          lojaId: filtroLoja,
+          skuId: entradaSku,
+          disponivel: novoDisponivel,
+          reservado: 0,
+          emTransito: 0,
+        }
+    const movimento = {
+      id: generateId(),
+      empresaId,
+      lojaId: filtroLoja,
+      skuId: entradaSku,
+      tipo: "ajuste" as const,
+      quantidade: qtd,
+      motivo: entradaMotivo || "Entrada de estoque",
+      usuario: sessao.nome,
+      dataHora: new Date().toISOString(),
+      referencia: "",
+    }
+    updateStore((s) => ({
+      ...s,
+      estoque: s.estoque.some((e) => e.skuId === entradaSku && e.lojaId === filtroLoja)
+        ? s.estoque.map((e) => (e.skuId === entradaSku && e.lojaId === filtroLoja ? estoqueAtualizado : e))
+        : [...s.estoque, estoqueAtualizado],
+      movimentosEstoque: [...s.movimentosEstoque, movimento],
+    }))
+    persistEstoqueSaldo(estoqueAtualizado).catch((err) => console.error("Erro ao salvar estoque no banco:", err instanceof Error ? err.message : String(err)))
+    persistMovimentoEstoque(movimento).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err)))
+    addAuditLog({
+      usuario: sessao.nome,
+      acao: "ajuste_estoque",
+      entidade: "Estoque",
+      entidadeId: entradaSku,
+      antes: JSON.stringify({ disponivel: estoqueItem?.disponivel }),
+      depois: JSON.stringify({ disponivel: novoDisponivel }),
+      motivo: entradaMotivo || "Entrada de estoque",
+    })
+    setShowEntradaEstoque(false)
+    setEntradaSku("")
+    setEntradaQtd("")
+    setEntradaMotivo("")
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -244,39 +383,150 @@ export function EstoqueConsulta() {
           <h2 className="page-title">Estoque</h2>
           <p className="page-description">Saldos, movimentações e transferências</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Dialog open={showEntradaEstoque} onOpenChange={setShowEntradaEstoque}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Entrada de estoque
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-foreground">Entrada de estoque</DialogTitle>
+                <p className="text-sm text-muted-foreground">Selecione o produto e informe a quantidade a adicionar.</p>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label>Produto / SKU</Label>
+                  <Select value={entradaSku} onValueChange={setEntradaSku}>
+                    <SelectTrigger><SelectValue placeholder="Busque pelo produto ou código" /></SelectTrigger>
+                    <SelectContent>
+                      {store.skus.filter((s) => s.empresaId === empresaId).map((s) => {
+                        const prod = store.produtos.find((p) => p.id === s.produtoId)
+                        const label = [prod?.nome, s.codigo, [s.cor, s.tamanho].filter(Boolean).join(" / ")].filter(Boolean).join(" · ")
+                        return <SelectItem key={s.id} value={s.id}>{label}</SelectItem>
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {entradaSku && (() => {
+                    const saldo = store.estoque.find((e) => e.skuId === entradaSku && e.lojaId === filtroLoja)?.disponivel ?? 0
+                    return <p className="text-xs text-muted-foreground">Saldo atual nesta loja: <strong className="text-foreground">{saldo}</strong></p>
+                  })()}
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="entrada-qtd-main">Quantidade a adicionar</Label>
+                  <Input
+                    id="entrada-qtd-main"
+                    type="number"
+                    min={1}
+                    placeholder="Ex: 10"
+                    value={entradaQtd}
+                    onChange={(e) => setEntradaQtd(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && realizarEntradaEstoque()}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="entrada-motivo-main">Motivo (opcional)</Label>
+                  <Input
+                    id="entrada-motivo-main"
+                    value={entradaMotivo}
+                    onChange={(e) => setEntradaMotivo(e.target.value)}
+                    placeholder="Ex: Compra, Devolução, Inventário"
+                  />
+                </div>
+                <Button onClick={realizarEntradaEstoque} disabled={!entradaSku || !entradaQtd || Number(entradaQtd) <= 0}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Adicionar ao estoque
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={showEntradaRapida} onOpenChange={setShowEntradaRapida}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-foreground">Adicionar quantidade ao estoque</DialogTitle>
+              </DialogHeader>
+              {entradaRapidaSku && (() => {
+                const sku = store.skus.find((s) => s.id === entradaRapidaSku)
+                const produto = sku ? store.produtos.find((p) => p.id === sku.produtoId) : null
+                const saldoAtual = store.estoque.find((e) => e.skuId === entradaRapidaSku && e.lojaId === filtroLoja)?.disponivel ?? 0
+                return (
+                  <div className="grid gap-4 py-4">
+                    <div className="rounded-lg bg-muted/50 p-3 text-sm">
+                      <p className="font-medium text-foreground">{produto?.nome ?? "—"} {sku?.codigo && <span className="text-muted-foreground font-mono">({sku.codigo})</span>}</p>
+                      {(sku?.cor || sku?.tamanho) && <p className="text-muted-foreground text-xs mt-0.5">{[sku.cor, sku.tamanho].filter(Boolean).join(" · ")}</p>}
+                      <p className="text-muted-foreground mt-1">Saldo atual: <span className="font-semibold text-foreground">{saldoAtual}</span> unidades</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="entrada-qtd">Quantidade a adicionar</Label>
+                      <Input
+                        id="entrada-qtd"
+                        type="number"
+                        min={1}
+                        placeholder="Ex: 10"
+                        value={entradaRapidaQtd}
+                        onChange={(e) => setEntradaRapidaQtd(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && realizarEntradaRapida()}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="entrada-motivo">Motivo (opcional)</Label>
+                      <Input
+                        id="entrada-motivo"
+                        value={entradaRapidaMotivo}
+                        onChange={(e) => setEntradaRapidaMotivo(e.target.value)}
+                        placeholder="Ex: Compra, Devolução, Inventário"
+                      />
+                    </div>
+                    <Button onClick={realizarEntradaRapida} disabled={!entradaRapidaQtd || Number(entradaRapidaQtd) <= 0}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Adicionar ao estoque
+                    </Button>
+                  </div>
+                )
+              })()}
+            </DialogContent>
+          </Dialog>
           <Dialog open={showAjuste} onOpenChange={setShowAjuste}>
             <DialogTrigger asChild>
               <Button variant="outline">
                 <TrendingUp className="h-4 w-4 mr-2" />
-                Ajuste
+                Ajuste manual
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle className="text-foreground">Ajuste de Estoque</DialogTitle>
+                <p className="text-sm text-muted-foreground">Para entrada ou saída por correção. Use + para entrar e − para sair.</p>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label>SKU</Label>
+                  <Label>Produto / SKU</Label>
                   <Select value={ajusteSku} onValueChange={setAjusteSku}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um SKU" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Busque pelo produto ou código" /></SelectTrigger>
                     <SelectContent>
-                      {store.skus.filter((s) => s.empresaId === empresaId).map((s) => (
-                        <SelectItem key={s.id} value={s.id}>{s.codigo}</SelectItem>
-                      ))}
+                      {store.skus.filter((s) => s.empresaId === empresaId).map((s) => {
+                        const prod = store.produtos.find((p) => p.id === s.produtoId)
+                        const label = [prod?.nome, s.codigo, [s.cor, s.tamanho].filter(Boolean).join(" / ")].filter(Boolean).join(" · ")
+                        return <SelectItem key={s.id} value={s.id}>{label}</SelectItem>
+                      })}
                     </SelectContent>
                   </Select>
+                  {ajusteSku && (() => {
+                    const saldo = store.estoque.find((e) => e.skuId === ajusteSku && e.lojaId === filtroLoja)?.disponivel ?? 0
+                    return <p className="text-xs text-muted-foreground">Saldo atual: <strong className="text-foreground">{saldo}</strong></p>
+                  })()}
                 </div>
                 <div className="grid gap-2">
-                  <Label>Quantidade (positivo=entrada, negativo=saida)</Label>
-                  <Input type="number" value={ajusteQtd} onChange={(e) => setAjusteQtd(e.target.value)} />
+                  <Label>Quantidade (+ entra, − sai)</Label>
+                  <Input type="number" value={ajusteQtd} onChange={(e) => setAjusteQtd(e.target.value)} placeholder="Ex: 5 ou -3" />
                 </div>
                 <div className="grid gap-2">
                   <Label>Motivo</Label>
-                  <Input value={ajusteMotivo} onChange={(e) => setAjusteMotivo(e.target.value)} placeholder="Ex: Inventario" />
+                  <Input value={ajusteMotivo} onChange={(e) => setAjusteMotivo(e.target.value)} placeholder="Ex: Inventário, Correção" />
                 </div>
-                <Button onClick={realizarAjuste}>Confirmar Ajuste</Button>
+                <Button onClick={realizarAjuste} disabled={!ajusteSku || !ajusteQtd || Number(ajusteQtd) === 0}>Confirmar Ajuste</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -403,6 +653,7 @@ export function EstoqueConsulta() {
                     <TableHead className="text-right">Reservado</TableHead>
                     <TableHead className="text-right">Em Transito</TableHead>
                     <TableHead>Alerta</TableHead>
+                    <TableHead className="w-[100px] text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -429,6 +680,18 @@ export function EstoqueConsulta() {
                             OK
                           </Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => abrirEntradaRapida(e.skuId)}
+                          title="Adicionar quantidade ao estoque"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Adicionar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

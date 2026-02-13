@@ -55,13 +55,14 @@ export function CaixaTela() {
       )
     : undefined
 
+  const dataAbertura = sessaoAtual ? new Date(sessaoAtual.abertura).getTime() : 0
   const vendasSessao = sessaoAtual
     ? store.vendas.filter(
         (v) =>
           v.empresaId === empresaId &&
           v.lojaId === sessaoAtual.lojaId &&
           v.status === "finalizada" &&
-          v.dataHora >= sessaoAtual.abertura
+          new Date(v.dataHora).getTime() >= dataAbertura
       )
     : []
 
@@ -81,6 +82,13 @@ export function CaixaTela() {
     0
   )
   const totalVendas = vendasSessao.reduce((s, v) => s + v.total, 0)
+
+  // Fechamento: entradas (abertura + vendas em dinheiro + suprimentos) - saídas (sangrias)
+  const entradasDinheiro = sessaoAtual
+    ? sessaoAtual.valorAbertura + totalVendasDinheiro + sessaoAtual.suprimentos
+    : 0
+  const saidas = sessaoAtual ? sessaoAtual.sangrias : 0
+  const valorEsperadoDinheiro = entradasDinheiro - saidas
 
   async function abrirCaixa() {
     if (!lojaId) {
@@ -180,8 +188,7 @@ export function CaixaTela() {
       return
     }
     const vlFechamento = Number(valorFechamento) || 0
-    const esperado = sessaoAtual.valorAbertura + totalVendasDinheiro - sessaoAtual.sangrias + sessaoAtual.suprimentos
-    const divergencia = vlFechamento - esperado
+    const divergencia = vlFechamento - valorEsperadoDinheiro
 
     try {
       const { error } = await supabase
@@ -402,12 +409,15 @@ export function CaixaTela() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    Valor esperado em dinheiro:{" "}
-                    <span className="font-mono font-bold text-foreground">
-                      R$ {(sessaoAtual.valorAbertura + totalVendasDinheiro - sessaoAtual.sangrias + sessaoAtual.suprimentos).toFixed(2)}
-                    </span>
-                  </p>
+                  <p className="text-sm font-medium text-foreground">Resumo do caixa (entradas − saídas)</p>
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    <li>Entradas: Abertura R$ {sessaoAtual.valorAbertura.toFixed(2)} + Vendas (dinheiro) R$ {totalVendasDinheiro.toFixed(2)} + Suprimentos R$ {sessaoAtual.suprimentos.toFixed(2)} = R$ {entradasDinheiro.toFixed(2)}</li>
+                    <li>Saídas: Sangrias R$ {sessaoAtual.sangrias.toFixed(2)}</li>
+                    <li className="pt-1 font-medium text-foreground">
+                      Valor esperado em dinheiro:{" "}
+                      <span className="font-mono font-bold">R$ {valorEsperadoDinheiro.toFixed(2)}</span>
+                    </li>
+                  </ul>
                 </div>
                 <div className="grid gap-2">
                   <Label>Valor Contado (R$)</Label>

@@ -1,7 +1,6 @@
 "use client";
 
-import React from "react";
-import { useState, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   Building2,
   ShieldCheck,
@@ -27,7 +26,9 @@ import {
   LogOut,
   Lock,
   UserCog,
-  Monitor,
+  FileText,
+  Settings as SettingsIcon,
+  CreditCard,
 } from "lucide-react";
 import {
   SidebarProvider,
@@ -54,9 +55,16 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/hooks/use-store";
 import {
   logout,
+  getStore,
+  restoreSessaoFromStorage,
   getModulosLicenciados,
   podeAcessarModulo,
   addAuditLog,
@@ -65,6 +73,7 @@ import {
   type ModuloId,
   type SessaoUsuario,
 } from "@/lib/store";
+import { carregarUsuariosEmpresaFromSupabase } from "@/lib/login-unificado";
 
 import { LoginScreen } from "@/components/login-screen";
 import { ClientOnly } from "@/components/client-only";
@@ -82,6 +91,7 @@ import { CadastrosLojas } from "@/components/modules/cadastros-lojas";
 import { EstoqueConsulta } from "@/components/modules/estoque-consulta";
 import { CustosTela } from "@/components/modules/custos-tela";
 import { PrecificacaoTela } from "@/components/modules/precificacao-tela";
+import { TaxasCartaoTela } from "@/components/modules/taxas-cartao-tela";
 import { PDVTela } from "@/components/modules/pdv-tela";
 import { CaixaTela } from "@/components/modules/caixa-tela";
 import { FinanceiroTela } from "@/components/modules/financeiro-tela";
@@ -104,6 +114,7 @@ type Page =
   | "estoque"
   | "custos"
   | "precificacao"
+  | "taxas-cartao"
   | "pdv"
   | "caixa"
   | "financeiro"
@@ -192,6 +203,12 @@ const allMenuGroups: MenuGroup[] = [
         icon: Tag,
         moduloId: "basice",
       },
+      {
+        id: "taxas-cartao",
+        label: "Taxas de Cartao",
+        icon: CreditCard,
+        moduloId: "basice",
+      },
     ],
   },
   {
@@ -237,6 +254,7 @@ const pageComponents: Record<Page, React.ComponentType> = {
   estoque: EstoqueConsulta,
   custos: CustosTela,
   precificacao: PrecificacaoTela,
+  "taxas-cartao": TaxasCartaoTela,
   pdv: PDVTela,
   caixa: CaixaTela,
   financeiro: FinanceiroTela,
@@ -275,11 +293,43 @@ function getPapelLabel(sessao: SessaoUsuario): string {
   return "Funcionario";
 }
 
+// Contexto para a página do PDV acionar o modo tela cheia
+const PdvFullscreenContext = createContext<{
+  enterPdvFullscreen: () => void;
+  canAccessPDVFullscreen: boolean;
+} | null>(null);
+
+export function usePdvFullscreen() {
+  return useContext(PdvFullscreenContext);
+}
+
 export function AppShell() {
   const store = useAppStore();
   const sessao = store.sessao;
+  const [sessionRestored, setSessionRestored] = useState(false);
 
-  // Aplica cores e tema da identidade visual da empresa (quando logado em empresa com white label)
+  // Restaura sessão do localStorage e, se for usuário de empresa, carrega usuários para a navbar exibir os itens
+  useEffect(() => {
+    restoreSessaoFromStorage();
+    const sessao = getStore().sessao;
+    if (sessao?.tipo === "usuario_empresa") {
+      carregarUsuariosEmpresaFromSupabase().then(() => setSessionRestored(true));
+    } else {
+      setSessionRestored(true);
+    }
+  }, []);
+
+  if (!sessionRestored) {
+    return (
+      <ClientOnly>
+        <BrandingStyles />
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        </div>
+      </ClientOnly>
+    );
+  }
+
   if (!sessao) {
     return (
       <ClientOnly>
@@ -300,6 +350,7 @@ export function AppShell() {
 function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
   const store = useAppStore();
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+  const [openGroup, setOpenGroup] = useState<string | null>(() => null);
 
   // PDV Fullscreen mode
   const [pdvFullscreen, setPdvFullscreen] = useState(false);
@@ -387,6 +438,10 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
   const safePage = allowedPages.includes(currentPage)
     ? currentPage
     : "dashboard";
+  const currentGroup = useMemo(
+    () => allMenuGroups.find((g) => g.items.some((i) => i.id === safePage)),
+    [safePage],
+  );
   const PageComponent = pageComponents[safePage];
   const groupLabel = getGroupLabel(safePage);
   const pageLabel = getPageLabel(safePage);
@@ -405,9 +460,11 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
       return;
     }
     setCurrentPage(page);
+    const group = allMenuGroups.find((g) => g.items.some((i) => i.id === page));
+    if (group) setOpenGroup(group.label);
   }
 
-  function enterPDVFullscreen() {
+  const enterPdvFullscreen = useCallback(() => {
     if (!canAccessPDVFullscreen) return;
     addAuditLog({
       usuario: sessao.nome,
@@ -422,7 +479,15 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
       motivo: "Entrada no modo PDV fullscreen",
     });
     setPdvFullscreen(true);
-  }
+  }, [canAccessPDVFullscreen, sessao.nome, sessao.empresaId]);
+
+  const pdvFullscreenValue = useMemo(
+    () => ({
+      enterPdvFullscreen,
+      canAccessPDVFullscreen,
+    }),
+    [enterPdvFullscreen, canAccessPDVFullscreen],
+  );
 
   function handleLogout() {
     addAuditLog({
@@ -445,9 +510,10 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
   }
 
   return (
+    <PdvFullscreenContext.Provider value={pdvFullscreenValue}>
     <SidebarProvider>
       <Sidebar collapsible="icon" className="border-r-0">
-        <SidebarHeader className="px-2 py-2 md:px-3 md:py-2">
+        <SidebarHeader className="px-2 py-1.5 md:px-3 md:py-1.5">
           <button
             type="button"
             onClick={() => handleNavigate("dashboard")}
@@ -482,61 +548,70 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
 
         <SidebarSeparator />
 
-        <div className="px-2 py-1 md:px-2 md:py-1 group-data-[collapsible=icon]:hidden">
+        <div className="px-2 py-0.5 group-data-[collapsible=icon]:hidden">
           <SidebarMenuItem className="list-none">
             <SidebarMenuButton
               size="sm"
               isActive={safePage === "dashboard"}
               onClick={() => handleNavigate("dashboard")}
               tooltip="Painel Principal"
-              className="gap-2 text-[12px]"
+              className="gap-2 text-[11px] py-1 h-6 min-h-6"
             >
-              <LayoutDashboard className="h-4 w-4" />
-              <span className="font-medium">Painel Principal</span>
+              <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+              <span className="font-medium truncate">Painel Principal</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </div>
 
-        <SidebarContent className="px-1">
-          {filteredGroups.map((group) => (
-            <Collapsible
-              key={group.label}
-              defaultOpen
-              className="group/collapsible"
-            >
-              <SidebarGroup className="py-0">
-                <SidebarGroupLabel asChild>
-                  <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/60 transition-colors">
-                    <span className="flex-1 text-left">{group.label}</span>
-                    <ChevronDown className="h-3 w-3 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-180" />
-                  </CollapsibleTrigger>
-                </SidebarGroupLabel>
-                <CollapsibleContent>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {group.items.map((item) => (
-                        <SidebarMenuItem key={item.id}>
-                          <SidebarMenuButton
-                            size="sm"
-                            isActive={safePage === item.id}
-                            onClick={() => handleNavigate(item.id)}
-                            tooltip={item.label}
-                            className="gap-2 text-[12px]"
-                          >
-                            <item.icon className="h-4 w-4 opacity-70" />
-                            <span>{item.label}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </CollapsibleContent>
-              </SidebarGroup>
-            </Collapsible>
-          ))}
+        <SidebarContent className="px-1 flex-1 min-h-0 overflow-hidden gap-0">
+          {filteredGroups.map((group) => {
+            const isExplicitlyOpen = openGroup === group.label;
+            const isCurrentPageGroup =
+              openGroup === null && currentGroup?.label === group.label;
+            const isOpen = isExplicitlyOpen || isCurrentPageGroup;
+            return (
+              <Collapsible
+                key={group.label}
+                open={isOpen}
+                onOpenChange={(open) =>
+                  setOpenGroup(open ? group.label : null)
+                }
+                className="group/collapsible shrink-0"
+              >
+                <SidebarGroup className="py-0.5">
+                  <SidebarGroupLabel asChild>
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/60 transition-colors">
+                      <span className="flex-1 text-left">{group.label}</span>
+                      <ChevronDown className="h-3 w-3 shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-180" />
+                    </CollapsibleTrigger>
+                  </SidebarGroupLabel>
+                  <CollapsibleContent>
+                    <SidebarGroupContent>
+                      <SidebarMenu className="gap-0.5">
+                        {group.items.map((item) => (
+                          <SidebarMenuItem key={item.id}>
+                            <SidebarMenuButton
+                              size="sm"
+                              isActive={safePage === item.id}
+                              onClick={() => handleNavigate(item.id)}
+                              tooltip={item.label}
+                              className="gap-2 text-[11px] py-1 h-6 min-h-6"
+                            >
+                              <item.icon className="h-3.5 w-3.5 opacity-70 shrink-0" />
+                              <span className="truncate">{item.label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    </SidebarGroupContent>
+                  </CollapsibleContent>
+                </SidebarGroup>
+              </Collapsible>
+            );
+          })}
         </SidebarContent>
 
-        <SidebarFooter className="px-2 py-2 md:px-2 md:py-2">
+        <SidebarFooter className="px-2 py-1.5 md:px-2 md:py-1.5 shrink-0">
           <SidebarSeparator className="mb-2" />
           <SidebarMenu>
             <SidebarMenuItem>
@@ -582,59 +657,61 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
       </Sidebar>
 
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-border/60 bg-background/95 backdrop-blur-sm px-6">
-          <SidebarTrigger className="-ml-1.5" />
-          <Separator orientation="vertical" className="h-5" />
-          <nav className="flex items-center gap-1.5 text-sm">
-            <button
-              type="button"
-              onClick={() => handleNavigate("dashboard")}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Inicio
-            </button>
-            {groupLabel && (
-              <>
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-                <span className="text-muted-foreground">{groupLabel}</span>
-              </>
-            )}
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-            <span className="font-medium text-foreground">{pageLabel}</span>
-          </nav>
-          <div className="ml-auto flex items-center gap-3">
-            {canAccessPDVFullscreen && (
+        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-border/50 bg-card/95 backdrop-blur-sm px-4 sm:px-5">
+          <SidebarTrigger className="-ml-1 size-9 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" aria-label="Abrir/fechar menu" />
+          <div className="relative hidden md:block flex-shrink-0">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+            <Input
+              placeholder="Buscar..."
+              className="h-9 w-44 pl-8 pr-3 text-sm bg-muted/50 border-0 rounded-lg focus-visible:ring-1 text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="flex-1 min-w-0" />
+          <nav className="flex items-center gap-0.5" aria-label="Ações rápidas">
+            {allowedPages.includes("pdv") && (
               <button
                 type="button"
-                onClick={enterPDVFullscreen}
-                className="flex items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary))]/90 transition-colors"
+                onClick={() => handleNavigate("pdv")}
+                className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Ir para PDV"
               >
-                <Monitor className="h-3.5 w-3.5" />
-                Entrar no PDV
+                <ShoppingCart className="h-4 w-4" />
               </button>
             )}
-            <Badge variant="secondary" className="text-[11px] font-medium">
-              {getPapelLabel(sessao)}
-            </Badge>
-            <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-secondary-foreground/80" />
-              <Input
-                placeholder="Buscar..."
-                className="h-8 w-56 pl-9 text-xs bg-secondary border-0 focus-visible:ring-1 text-secondary-foreground placeholder:text-secondary-foreground/70"
-              />
-            </div>
-            <button
-              type="button"
-              className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            >
-              <Bell className="h-4 w-4" />
-            </button>
-          </div>
+            {allowedPages.includes("relatorios") && (
+              <button
+                type="button"
+                onClick={() => handleNavigate("relatorios")}
+                className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Relatórios e documentos"
+              >
+                <FileText className="h-4 w-4" />
+              </button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="relative flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Notificações"
+                >
+                  <Bell className="h-4 w-4" />
+                  <span className="absolute right-1 top-1 size-2 rounded-full bg-primary ring-2 ring-card" aria-label="Notificações não lidas" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <div className="p-3 text-sm font-medium text-foreground border-b border-border/60">Notificações</div>
+                <div className="p-4 text-center text-sm text-muted-foreground">
+                  Nenhuma notificação no momento.
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </nav>
         </header>
 
         <main className="flex-1 overflow-auto bg-background">
           <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto">
-            <div className="rounded-3xl bg-background shadow-xl border border-border/50 overflow-hidden">
+            <div className="rounded-xl bg-card shadow-sm border border-border/50 overflow-hidden">
               <div className="p-6 lg:p-8">
                 {safePage === "identidade-visual" ? (
                   <IdentidadeVisual sessao={sessao} />
@@ -645,7 +722,17 @@ function AppShellInner({ sessao }: { sessao: SessaoUsuario }) {
             </div>
           </div>
         </main>
+
+        <a
+          href="#"
+          className="fixed bottom-6 right-6 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-[hsl(var(--warning))] text-[hsl(var(--warning-foreground))] shadow-lg hover:opacity-90 transition-opacity"
+          title="Configurações"
+          aria-label="Configurações"
+        >
+          <SettingsIcon className="h-5 w-5" />
+        </a>
       </SidebarInset>
     </SidebarProvider>
+    </PdvFullscreenContext.Provider>
   );
 }

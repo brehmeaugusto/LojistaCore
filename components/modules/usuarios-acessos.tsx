@@ -497,15 +497,15 @@ export function UsuariosAcessos() {
             <div className="grid gap-1.5">
               <Label className="text-xs">Loja {form.papel === "funcionario" && <span className="text-red-500">*</span>}</Label>
               <Select
-                value={form.lojaId}
-                onValueChange={(v) => setForm({ ...form, lojaId: v })}
+                value={form.lojaId || "__todas__"}
+                onValueChange={(v) => setForm({ ...form, lojaId: v === "__todas__" ? "" : v })}
               >
                 <SelectTrigger className="h-8 text-sm">
                   <SelectValue placeholder="Selecione a loja" />
                 </SelectTrigger>
                 <SelectContent>
                   {form.papel !== "funcionario" && (
-                    <SelectItem value="">Todas as lojas</SelectItem>
+                    <SelectItem value="__todas__">Todas as lojas</SelectItem>
                   )}
                   {lojasEmpresa.map((l) => (
                     <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>

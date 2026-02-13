@@ -14,6 +14,7 @@ drop table if exists public.vendas cascade;
 -- Caixa
 drop table if exists public.sessoes_caixa cascade;
 -- Custos e preços
+drop table if exists public.taxas_cartao cascade;
 drop table if exists public.linhas_precificacao cascade;
 drop table if exists public.snapshots_overhead cascade;
 drop table if exists public.parametros_custo cascade;

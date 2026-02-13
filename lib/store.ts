@@ -384,6 +384,10 @@ export interface ParametrosCusto {
   empresaId: string;
   totalPecasEstoque: number;
   descontoAVistaFixo: number; // percentage e.g. 5
+  /** Até quantas parcelas no cartão são sem juros (ex: 3 = 1x, 2x e 3x sem juros) */
+  parcelasSemJuros: number;
+  /** Percentual de juros aplicado ao valor por parcela além do sem juros (ex: 2 = 2% por parcela) */
+  taxaJurosParcela: number;
 }
 
 export interface SnapshotOverhead {
@@ -407,10 +411,23 @@ export interface LinhaPrecificacao {
   tamanho: string;
   quantidade: number;
   valorAtacado: number | null;
-  taxaCartao: number;
+  /** Preço de venda base (à vista = preco * (1 - desconto); cartão no PDV = preco * (1 + taxa por parcelas)) */
   precoCartao: number | null;
   descontoAVista: number;
   modoPrecoAVista: "padrao" | "excecao";
+}
+
+/** Bandeiras de cartão para taxas */
+export type BandeiraCartao = "visa" | "mastercard" | "elo" | "hipercard" | "amex";
+/** Tipo/faixa para taxa: crédito à vista, débito, parcelado 2-6x, parcelado 7-12x */
+export type TipoTaxaCartao = "credito" | "debito" | "parcelado_2_6" | "parcelado_7_12";
+
+export interface TaxaCartao {
+  id: string;
+  empresaId: string;
+  bandeira: BandeiraCartao;
+  tipo: TipoTaxaCartao;
+  taxa: number | null;
 }
 
 // PDV / Vendas
@@ -445,6 +462,8 @@ export interface Pagamento {
   forma: "dinheiro" | "cartao_credito" | "cartao_debito" | "pix" | "vale_troca";
   valor: number;
   parcelas: number;
+  /** Bandeira do cartão quando forma é cartão (para taxa e relatórios). */
+  bandeira?: BandeiraCartao;
 }
 
 // Caixa
@@ -479,8 +498,17 @@ export interface ContaReceber {
 // Data Store with demo data
 // ==========================================
 
+/** Gera um UUID v4 compatível com as colunas uuid do Supabase. */
 function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback: UUID v4 com Math.random (compatível com qualquer ambiente)
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 // Demo data
@@ -885,6 +913,8 @@ const demoParametros: ParametrosCusto = {
   empresaId: "emp1",
   totalPecasEstoque: 223,
   descontoAVistaFixo: 5,
+  parcelasSemJuros: 3,
+  taxaJurosParcela: 2,
 };
 
 const demoLinhasPrecificacao: LinhaPrecificacao[] = [
@@ -897,7 +927,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "P, M, G",
     quantidade: 55,
     valorAtacado: 25,
-    taxaCartao: 3.5,
     precoCartao: 69.9,
     descontoAVista: 0,
     modoPrecoAVista: "padrao",
@@ -911,7 +940,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "38, 40, 42",
     quantidade: 20,
     valorAtacado: 55,
-    taxaCartao: 3.5,
     precoCartao: 149.9,
     descontoAVista: 0,
     modoPrecoAVista: "padrao",
@@ -925,7 +953,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "P, M",
     quantidade: 15,
     valorAtacado: 40,
-    taxaCartao: 3.5,
     precoCartao: 119.9,
     descontoAVista: 8,
     modoPrecoAVista: "excecao",
@@ -939,7 +966,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "M, G, GG",
     quantidade: 8,
     valorAtacado: 120,
-    taxaCartao: 3.5,
     precoCartao: 349.9,
     descontoAVista: 10,
     modoPrecoAVista: "excecao",
@@ -953,7 +979,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "P, M",
     quantidade: 30,
     valorAtacado: null,
-    taxaCartao: 3.5,
     precoCartao: 79.9,
     descontoAVista: 0,
     modoPrecoAVista: "padrao",
@@ -967,7 +992,6 @@ const demoLinhasPrecificacao: LinhaPrecificacao[] = [
     tamanho: "38, 40",
     quantidade: 22,
     valorAtacado: 30,
-    taxaCartao: 3.5,
     precoCartao: null,
     descontoAVista: 0,
     modoPrecoAVista: "padrao",
@@ -1249,6 +1273,7 @@ export interface AppStore {
   parametrosCusto: ParametrosCusto;
   snapshotsOverhead: SnapshotOverhead[];
   linhasPrecificacao: LinhaPrecificacao[];
+  taxasCartao: TaxaCartao[];
   vendas: Venda[];
   sessoesCaixa: SessaoCaixa[];
   contasReceber: ContaReceber[];
@@ -1276,6 +1301,7 @@ let store: AppStore = {
   parametrosCusto: demoParametros,
   snapshotsOverhead: [],
   linhasPrecificacao: demoLinhasPrecificacao,
+  taxasCartao: [],
   vendas: demoVendas,
   sessoesCaixa: demoSessoesCaixa,
   contasReceber: demoContasReceber,
@@ -1351,6 +1377,53 @@ export function addAuditLog(entry: Omit<AuditoriaGlobal, "id" | "dataHora">) {
 // Sessao e controle de acesso helpers
 // ==========================================
 
+const SESSION_STORAGE_KEY = "lojistacore_sessao";
+
+/** Persiste a sessão atual no localStorage (só no cliente). Chamado após login. */
+export function persistSessaoToStorage(): void {
+  if (typeof window === "undefined") return;
+  const s = getStore();
+  if (s.sessao) {
+    try {
+      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(s.sessao));
+    } catch {
+      // ignorar falha (storage cheio, privado, etc.)
+    }
+  }
+}
+
+/** Remove a sessão persistida (chamado no logout). */
+export function clearSessaoFromStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignorar
+  }
+}
+
+/** Restaura a sessão a partir do localStorage. Chamar uma vez no carregamento do app (client). */
+export function restoreSessaoFromStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "tipo" in parsed &&
+      (parsed.tipo === "admin_global" || parsed.tipo === "usuario_empresa") &&
+      "nome" in parsed &&
+      "papel" in parsed
+    ) {
+      updateStore((s) => ({ ...s, sessao: parsed as SessaoUsuario }));
+    }
+  } catch {
+    // dado inválido ou corrompido; não restaurar
+  }
+}
+
 export function loginAdminGlobal() {
   updateStore((s) => ({
     ...s,
@@ -1360,6 +1433,7 @@ export function loginAdminGlobal() {
       papel: "admin_global",
     },
   }));
+  persistSessaoToStorage();
 }
 
 export function loginUsuarioEmpresa(usuarioId: string) {
@@ -1382,10 +1456,12 @@ export function loginUsuarioEmpresa(usuarioId: string) {
         : u,
     ),
   }));
+  persistSessaoToStorage();
   return true;
 }
 
 export function logout() {
+  clearSessaoFromStorage();
   updateStore((s) => ({ ...s, sessao: null }));
 }
 

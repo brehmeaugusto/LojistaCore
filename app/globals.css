@@ -17,7 +17,7 @@
     @apply text-sm text-muted-foreground mt-1;
   }
   .card-padrao {
-    @apply rounded-2xl border border-border/60 shadow-sm bg-card text-card-foreground;
+    @apply rounded-xl border border-border/60 shadow-sm bg-card text-card-foreground;
   }
   .label-padrao {
     @apply text-xs font-medium text-muted-foreground uppercase tracking-wider;
@@ -33,44 +33,47 @@
 }
 
 @layer base {
-  /* Perfil padrão do sistema: cores e estilo da tela de login (sky) */
+  /* Paleta do dashboard: azul primário #2E7DFF, sidebar cinza, branco/off-white, amarelo/verde/laranja accents */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 207 24% 16%;
+    --background: 0 0% 98%;
+    --foreground: 220 14% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 207 24% 16%;
+    --card-foreground: 220 14% 16%;
     --popover: 0 0% 100%;
-    --popover-foreground: 207 24% 16%;
-    --primary: 199 89% 48%;
+    --popover-foreground: 220 14% 16%;
+    /* Primary: azul profundo #2E7DFF */
+    --primary: 218 100% 59%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 199 30% 96%;
-    --secondary-foreground: 207 24% 16%;
-    --muted: 199 20% 96%;
-    --muted-foreground: 218 9% 65%;
-    --accent: 199 30% 94%;
-    --accent-foreground: 207 24% 16%;
+    --secondary: 220 14% 94%;
+    --secondary-foreground: 220 14% 16%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 218 100% 96%;
+    --accent-foreground: 218 100% 30%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 199 20% 90%;
-    --input: 199 20% 90%;
-    --ring: 199 89% 48%;
-    --chart-1: 199 89% 48%;
-    --chart-2: 199 60% 60%;
-    --chart-3: 38 92% 50%;
-    --chart-4: 160 60% 45%;
-    --chart-5: 0 72% 51%;
-    --radius: 0.75rem;
-    --sidebar-background: 199 89% 42%;
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 100%;
-    --sidebar-primary-foreground: 199 89% 42%;
-    --sidebar-accent: 199 70% 35%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 199 60% 38%;
-    --sidebar-ring: 0 0% 100%;
-    --warning: 38 92% 50%;
+    --border: 220 14% 90%;
+    --input: 220 14% 90%;
+    --ring: 218 100% 59%;
+    --chart-1: 218 100% 59%;
+    --chart-2: 218 80% 75%;
+    --chart-3: 45 93% 47%;
+    --chart-4: 142 60% 42%;
+    --chart-5: 25 95% 53%;
+    --radius: 0.5rem;
+    /* Sidebar: fundo cinza claro; item ativo = primary */
+    --sidebar-background: 220 14% 96%;
+    --sidebar-foreground: 220 14% 25%;
+    --sidebar-primary: 218 100% 59%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 92%;
+    --sidebar-accent-foreground: 220 14% 25%;
+    --sidebar-border: 220 14% 90%;
+    --sidebar-ring: 218 100% 59%;
+    /* Prioridade / badges */
+    --warning: 45 93% 47%;
     --warning-foreground: 0 0% 100%;
-    --success: 152 60% 42%;
+    --success: 142 60% 42%;
     --success-foreground: 0 0% 100%;
   }
 }

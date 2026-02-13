@@ -11,8 +11,14 @@ import {
   type Venda,
   type VendaItem,
   type Pagamento,
+  type LinhaPrecificacao,
+  type TipoTaxaCartao,
+  type BandeiraCartao,
   type SessaoUsuario,
+  type EstoqueSaldo,
+  type MovimentoEstoque,
 } from "@/lib/store"
+import { persistEstoqueSaldo, persistMovimentoEstoque, persistVenda, persistContaReceber } from "@/lib/supabase-sync"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -40,6 +46,14 @@ import {
   Keyboard,
 } from "lucide-react"
 
+const BANDEIRAS: { id: BandeiraCartao; label: string }[] = [
+  { id: "visa", label: "VISA" },
+  { id: "mastercard", label: "Mastercard" },
+  { id: "elo", label: "Elo" },
+  { id: "hipercard", label: "Hipercard" },
+  { id: "amex", label: "Amex" },
+]
+
 // =============================================
 // PDV Fullscreen (Kiosk Mode)
 // =============================================
@@ -58,6 +72,7 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   const [itensVenda, setItensVenda] = useState<VendaItem[]>([])
   const [formaPagamento, setFormaPagamento] = useState<Pagamento["forma"]>("dinheiro")
   const [parcelas, setParcelas] = useState(1)
+  const [bandeiraSelecionada, setBandeiraSelecionada] = useState<BandeiraCartao>("visa")
   const [clienteSelecionado, setClienteSelecionado] = useState("")
   const [showExitModal, setShowExitModal] = useState(false)
   const [showFinalizarModal, setShowFinalizarModal] = useState(false)
@@ -112,6 +127,66 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
   const subtotal = itensVenda.reduce((s, i) => s + i.precoUnitario * i.quantidade, 0)
   const totalDescontos = itensVenda.reduce((s, i) => s + i.desconto, 0)
   const totalVenda = subtotal - totalDescontos
+
+  function getTipoTaxaPorParcelas(n: number): TipoTaxaCartao {
+    if (n <= 1) return "credito"
+    if (n <= 6) return "parcelado_2_6"
+    return "parcelado_7_12"
+  }
+
+  /** Taxa (%) da bandeira para o tipo (parcelas). Débito usa tipo "debito". */
+  function getTaxaCartaoParaBandeira(bandeira: BandeiraCartao, nParcelas: number, forma: "cartao_credito" | "cartao_debito"): number {
+    const tipo: TipoTaxaCartao = forma === "cartao_debito" ? "debito" : getTipoTaxaPorParcelas(nParcelas)
+    const row = store.taxasCartao.find(
+      (t) => t.empresaId === empresaId && t.bandeira === bandeira && t.tipo === tipo && t.taxa != null
+    )
+    return row?.taxa ?? 0
+  }
+
+  const taxaCartaoAtual =
+    formaPagamento === "cartao_credito"
+      ? getTaxaCartaoParaBandeira(bandeiraSelecionada, parcelas, "cartao_credito")
+      : formaPagamento === "cartao_debito"
+        ? getTaxaCartaoParaBandeira(bandeiraSelecionada, 1, "cartao_debito")
+        : 0
+
+  /** Preço unitário: à vista = preço com desconto; cartão = preço base com taxa da bandeira. */
+  function precoPorFormaPagamento(
+    linha: LinhaPrecificacao | undefined,
+    forma: Pagamento["forma"],
+    descontoFixoPadrao: number,
+    nParcelas: number,
+    bandeira: BandeiraCartao = "visa"
+  ): number {
+    if (!linha?.precoCartao) return 0
+    const isAVista = forma === "dinheiro" || forma === "pix"
+    if (forma === "cartao_debito" || isAVista) {
+      if (linha.modoPrecoAVista === "padrao") {
+        return linha.precoCartao * (1 - descontoFixoPadrao / 100)
+      }
+      return linha.precoCartao * (1 - linha.descontoAVista / 100)
+    }
+    if (forma === "cartao_credito") {
+      const taxa = getTaxaCartaoParaBandeira(bandeira, nParcelas, "cartao_credito")
+      return linha.precoCartao * (1 + taxa / 100)
+    }
+    return linha.precoCartao * (1 - descontoFixoPadrao / 100)
+  }
+
+  function atualizarPrecosPorFormaPagamento(forma: Pagamento["forma"], nParcelas: number = parcelas, bandeira: BandeiraCartao = bandeiraSelecionada) {
+    const descontoFixo = store.parametrosCusto.descontoAVistaFixo
+    setItensVenda((prev) =>
+      prev.map((item) => {
+        const sku = store.skus.find((s) => s.id === item.skuId)
+        const produto = sku ? store.produtos.find((p) => p.id === sku.produtoId) : undefined
+        const linha = store.linhasPrecificacao.find(
+          (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
+        )
+        const preco = precoPorFormaPagamento(linha, forma, descontoFixo, nParcelas, bandeira)
+        return { ...item, precoUnitario: preco }
+      })
+    )
+  }
 
   // Focus na busca ao montar
   useEffect(() => {
@@ -169,7 +244,13 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
     const linhaPrecificacao = store.linhasPrecificacao.find(
       (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
     )
-    const preco = linhaPrecificacao?.precoCartao ?? 0
+    const preco = precoPorFormaPagamento(
+      linhaPrecificacao,
+      formaPagamento,
+      store.parametrosCusto.descontoAVistaFixo,
+      parcelas,
+      bandeiraSelecionada
+    )
 
     const existing = itensVenda.find((i) => i.skuId === skuId)
     if (existing) {
@@ -257,7 +338,16 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       vendedor: sessao.nome,
       clienteId: clienteSelecionado,
       itens: itensVenda,
-      pagamentos: [{ forma: formaPagamento, valor: totalVenda, parcelas }],
+      pagamentos: [
+        {
+          forma: formaPagamento,
+          valor: totalVenda,
+          parcelas,
+          ...((formaPagamento === "cartao_credito" || formaPagamento === "cartao_debito") && {
+            bandeira: bandeiraSelecionada,
+          }),
+        },
+      ],
       status: "finalizada",
       dataHora: new Date().toISOString(),
       desconto: totalDescontos,
@@ -284,28 +374,47 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
       formaPagamento,
     }
 
+    const saldosParaPersistir: EstoqueSaldo[] = []
+    const movimentosParaPersistir: MovimentoEstoque[] = []
+
     updateStore((s) => {
       let newEstoque = [...s.estoque]
       const newMovimentos = [...s.movimentosEstoque]
 
       for (const item of itensVenda) {
+        const estoqueAtual = newEstoque.find((e) => e.skuId === item.skuId && e.lojaId === lojaId)
+        const novoDisponivel = (estoqueAtual?.disponivel ?? 0) - item.quantidade
+        const saldoAtualizado = estoqueAtual
+          ? { ...estoqueAtual, disponivel: novoDisponivel }
+          : {
+              id: generateId(),
+              empresaId,
+              lojaId,
+              skuId: item.skuId,
+              disponivel: novoDisponivel,
+              reservado: 0,
+              emTransito: 0,
+            }
         newEstoque = newEstoque.map((e) =>
-          e.skuId === item.skuId && e.lojaId === lojaId
-            ? { ...e, disponivel: e.disponivel - item.quantidade }
-            : e
+          e.skuId === item.skuId && e.lojaId === lojaId ? saldoAtualizado : e
         )
-        newMovimentos.push({
+        if (!estoqueAtual) newEstoque.push(saldoAtualizado)
+        saldosParaPersistir.push(saldoAtualizado)
+
+        const mov = {
           id: generateId(),
           empresaId,
           lojaId,
           skuId: item.skuId,
-          tipo: "saida",
+          tipo: "saida" as const,
           quantidade: item.quantidade,
           motivo: `Venda ${vendaId}`,
           usuario: sessao.nome,
           dataHora: new Date().toISOString(),
-      referencia: vendaId,
-        })
+          referencia: vendaId,
+        }
+        newMovimentos.push(mov)
+        movimentosParaPersistir.push(mov)
       }
 
       return {
@@ -316,6 +425,19 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
         contasReceber: [...s.contasReceber, newConta],
       }
     })
+
+    saldosParaPersistir.forEach((saldo) => persistEstoqueSaldo(saldo).catch((err) => console.error("Erro ao salvar estoque no banco:", err instanceof Error ? err.message : String(err))))
+    movimentosParaPersistir.forEach((m) => persistMovimentoEstoque(m).catch((err) => console.error("Erro ao salvar movimento no banco:", err instanceof Error ? err.message : String(err))))
+    persistVenda(venda)
+      .then(() =>
+        persistContaReceber(newConta).catch((err) =>
+          console.error("Erro ao salvar conta a receber:", err instanceof Error ? err.message : String(err))
+        )
+      )
+      .catch((err) => {
+        console.error("Erro ao salvar venda no banco:", err instanceof Error ? err.message : String(err))
+        alert("Venda registrada localmente, mas não foi possível salvar no servidor. Tente sincronizar mais tarde.")
+      })
 
     addAuditLog({
       usuario: sessao.nome,
@@ -739,7 +861,10 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                 <button
                   key={fp.id}
                   type="button"
-                  onClick={() => setFormaPagamento(fp.id)}
+                  onClick={() => {
+                    setFormaPagamento(fp.id)
+                    atualizarPrecosPorFormaPagamento(fp.id, fp.id === "cartao_credito" ? parcelas : 1)
+                  }}
                   className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs transition-colors ${
                     formaPagamento === fp.id
                       ? "bg-[hsl(207,24%,30%)] text-[hsl(220,20%,95%)] ring-1 ring-[hsl(207,24%,45%)]"
@@ -751,20 +876,58 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                 </button>
               ))}
             </div>
+            {(formaPagamento === "cartao_credito" || formaPagamento === "cartao_debito") && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <span className="text-xs text-[hsl(218,9%,55%)]">Bandeira</span>
+                <select
+                  value={bandeiraSelecionada}
+                  onChange={(e) => {
+                    const b = e.target.value as BandeiraCartao
+                    setBandeiraSelecionada(b)
+                    atualizarPrecosPorFormaPagamento(formaPagamento, formaPagamento === "cartao_credito" ? parcelas : 1, b)
+                  }}
+                  className="h-7 rounded bg-[hsl(207,20%,18%)] border border-[hsl(207,18%,26%)] px-2 text-xs text-[hsl(220,20%,92%)]"
+                >
+                  {BANDEIRAS.map((b) => (
+                    <option key={b.id} value={b.id}>{b.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             {formaPagamento === "cartao_credito" && (
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex flex-col gap-1">
                 <span className="text-xs text-[hsl(218,9%,55%)]">Parcelas:</span>
                 <select
                   value={parcelas}
-                  onChange={(e) => setParcelas(Number(e.target.value))}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    setParcelas(n)
+                    atualizarPrecosPorFormaPagamento("cartao_credito", n)
+                  }}
                   className="h-7 rounded bg-[hsl(207,20%,18%)] border border-[hsl(207,18%,26%)] px-2 text-xs text-[hsl(220,20%,92%)]"
                 >
-                  {[1, 2, 3, 4, 5, 6, 10, 12].map((n) => (
-                    <option key={n} value={n}>
-                      {n}x {n > 1 ? `R$ ${(totalVenda / n).toFixed(2)}` : ""}
-                    </option>
-                  ))}
+                  {[1, 2, 3, 4, 5, 6, 10, 12].map((n) => {
+                    const taxa = getTaxaCartaoParaBandeira(bandeiraSelecionada, n, "cartao_credito")
+                    const totalParaN = itensVenda.reduce((s, item) => {
+                      const sku = store.skus.find((x) => x.id === item.skuId)
+                      const produto = sku ? store.produtos.find((p) => p.id === sku.produtoId) : undefined
+                      const linha = store.linhasPrecificacao.find(
+                        (l) => l.empresaId === empresaId && l.codigo === produto?.codigoInterno
+                      )
+                      const preco = precoPorFormaPagamento(linha, "cartao_credito", store.parametrosCusto.descontoAVistaFixo, n, bandeiraSelecionada)
+                      return s + preco * item.quantidade - item.desconto
+                    }, 0)
+                    const valorParcela = n > 0 ? totalParaN / n : 0
+                    return (
+                      <option key={n} value={n}>
+                        {n}x {taxa > 0 ? `(${taxa.toFixed(2)}%)` : ""} — R$ {valorParcela.toFixed(2)}/parcela
+                      </option>
+                    )
+                  })}
                 </select>
+                {taxaCartaoAtual > 0 && (
+                  <span className="text-[10px] text-[hsl(218,9%,50%)]">Taxa aplicada: {taxaCartaoAtual.toFixed(2)}%</span>
+                )}
               </div>
             )}
           </div>
@@ -833,7 +996,11 @@ export function PDVFullscreen({ sessao, onExit }: PDVFullscreenProps) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-[hsl(218,9%,60%)]">Pagamento</span>
-                    <span>{formasPagamento.find((f) => f.id === formaPagamento)?.label}</span>
+                    <span>
+                      {formasPagamento.find((f) => f.id === formaPagamento)?.label}
+                      {(formaPagamento === "cartao_credito" || formaPagamento === "cartao_debito") &&
+                        ` (${BANDEIRAS.find((b) => b.id === bandeiraSelecionada)?.label ?? bandeiraSelecionada})`}
+                    </span>
                   </div>
                   {formaPagamento === "cartao_credito" && parcelas > 1 && (
                     <div className="flex justify-between text-sm">

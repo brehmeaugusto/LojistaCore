@@ -349,6 +349,8 @@ export function CustosTela() {
             empresa_id: empresaId,
             total_pecas_estoque: totalPecas,
             desconto_avista_fixo: descontoFixo,
+            parcelas_sem_juros: store.parametrosCusto.parcelasSemJuros,
+            taxa_juros_parcela: store.parametrosCusto.taxaJurosParcela,
           },
           { onConflict: "empresa_id" }
         )
@@ -361,14 +363,15 @@ export function CustosTela() {
         return
       }
 
+      const row = data as Record<string, unknown>
       updateStore((s) => ({
         ...s,
         parametrosCusto: {
           empresaId,
-          totalPecasEstoque:
-            (data as any)?.total_pecas_estoque ?? totalPecas,
-          descontoAVistaFixo:
-            (data as any)?.desconto_avista_fixo ?? descontoFixo,
+          totalPecasEstoque: Number(row?.total_pecas_estoque) ?? totalPecas,
+          descontoAVistaFixo: Number(row?.desconto_avista_fixo) ?? descontoFixo,
+          parcelasSemJuros: Number(row?.parcelas_sem_juros) ?? s.parametrosCusto.parcelasSemJuros,
+          taxaJurosParcela: Number(row?.taxa_juros_parcela) ?? s.parametrosCusto.taxaJurosParcela,
         },
       }))
 

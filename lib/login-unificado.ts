@@ -10,6 +10,7 @@ import {
   updateStore,
   loginUsuarioEmpresa,
   addAuditLog,
+  persistSessaoToStorage,
   type UsuarioEmpresa,
   type PapelEmpresa,
   type UsuarioEmpresaStatus,
@@ -107,6 +108,7 @@ export async function loginUnificado(
       ...s,
       sessao: { tipo: "admin_global", nome: row.nome, papel: "admin_global" },
     }))
+    persistSessaoToStorage()
     addAuditLog({
       usuario: row.nome,
       acao: "login",
@@ -141,6 +143,7 @@ export async function loginUnificado(
   if (!ok) {
     return { ok: false, error: "Usuário inativo ou sem acesso." }
   }
+  persistSessaoToStorage()
   addAuditLog({
     usuario: usuario.nome,
     acao: "login",
